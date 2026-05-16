@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import NewReleaseModal from '../components/NewReleaseModal'
+import UpgradeModal, { FREE_LIMIT } from '../components/UpgradeModal'
 import { formatDate, isOverdue } from '../lib/cascadeEngine'
 
 interface Release {
@@ -18,6 +19,7 @@ export default function ReleasesPage() {
   const [releases, setReleases] = useState<Release[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
+  const [showUpgrade, setShowUpgrade] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [taskStats, setTaskStats] = useState<Record<string, { total: number; complete: number; overdue: number }>>({})
 
@@ -73,6 +75,14 @@ export default function ReleasesPage() {
     }
   }
 
+  const handleNewRelease = () => {
+    if (releases.length >= FREE_LIMIT) {
+      setShowUpgrade(true)
+    } else {
+      setShowModal(true)
+    }
+  }
+
   const getReleaseDaysUntil = (dateStr: string | null) => {
     if (!dateStr) return null
     const today = new Date()
@@ -90,7 +100,7 @@ export default function ReleasesPage() {
           <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>All your release plans in one place.</p>
         </div>
         <button
-          onClick={() => setShowModal(true)}
+          onClick={handleNewRelease}
           className="rounded-lg px-5 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90"
           style={{ background: 'var(--color-accent)', color: 'white' }}
         >
@@ -126,7 +136,7 @@ export default function ReleasesPage() {
             Create your first release plan and Cadence will build out your full timeline automatically.
           </p>
           <button
-            onClick={() => setShowModal(true)}
+            onClick={handleNewRelease}
             className="rounded-lg px-5 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90"
             style={{ background: 'var(--color-accent)', color: 'white' }}
           >
@@ -235,6 +245,10 @@ export default function ReleasesPage() {
             navigate(`/releases/${releaseId}`)
           }}
         />
+      )}
+
+      {showUpgrade && (
+        <UpgradeModal onClose={() => setShowUpgrade(false)} reason="release_limit" />
       )}
     </div>
   )

@@ -1,15 +1,24 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
 type Mode = 'login' | 'signup'
 
 export default function AuthPage() {
+  const navigate = useNavigate()
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // If already logged in, skip straight to dashboard
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) navigate('/dashboard', { replace: true })
+    })
+  }, [navigate])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -20,10 +29,15 @@ export default function AuthPage() {
     if (mode === 'signup') {
       const { error } = await supabase.auth.signUp({ email, password })
       if (error) setError(error.message)
-      else setMessage('Check your email to confirm your account.')
+      else setMessage('Check your email to confirm your account, then log in.')
     } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) setError(error.message)
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+      if (error) {
+        setError(error.message)
+      } else if (data.session) {
+        navigate('/dashboard', { replace: true })
+        return // skip setLoading(false) — we're navigating away
+      }
     }
 
     setLoading(false)

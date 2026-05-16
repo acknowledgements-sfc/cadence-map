@@ -9,6 +9,11 @@
 //  ↕ Detail Panel — persistent bottom drawer (always follows selection)
 //  ⚡ Pressure Map — task density heatmap overlay
 //
+// Aeon Timeline-inspired additions (Phase 1):
+//  🔴 Dependency violation lines — red edges when ordering is broken
+//  📋 Violation dialog — 3-option resolution when clicking red edges
+//  ▓  Progress bars   — partial fill on in-progress Gantt bars
+//
 // Tab / G / T to switch views. Click any task to open Detail Panel.
 // ============================================================
 
@@ -100,7 +105,6 @@ function computeGraphLayout(
 ): NodeLayout[] {
   if (tasks.length === 0) return []
 
-  // Sort tasks by due_date to determine x positions
   const sorted = [...tasks].sort((a, b) =>
     (a.due_date ?? '').localeCompare(b.due_date ?? '')
   )
@@ -117,25 +121,23 @@ function computeGraphLayout(
   const usableWidth = width - PADDING * 2
   const PHASE_HEIGHT = 90
 
-  // y = phase row (vertical lanes like Ableton tracks)
   const phaseIndex = Object.fromEntries(PHASES.map((p, i) => [p, i]))
 
   const nodes: NodeLayout[] = sorted.map(task => {
     const dayOffset = task.due_date ? daysBetween(minDate, task.due_date) : 0
     const x = PADDING + (dayOffset / totalDays) * usableWidth
     const y = PADDING + (phaseIndex[task.phase] ?? 0) * PHASE_HEIGHT + PHASE_HEIGHT / 2
-
     return { id: task.id, x, y, task }
   })
 
-  // Collision resolution: push overlapping nodes within same phase row apart
+  // Collision resolution within same phase row
   const MAX_ITER = 30
   for (let iter = 0; iter < MAX_ITER; iter++) {
     let moved = false
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
         const a = nodes[i], b = nodes[j]
-        if (Math.abs(a.y - b.y) > 5) continue // different phase rows — skip
+        if (Math.abs(a.y - b.y) > 5) continue
         const dx = b.x - a.x
         const dist = Math.abs(dx)
         const minDist = NODE_R * 2 + 8
@@ -150,9 +152,8 @@ function computeGraphLayout(
     if (!moved) break
   }
 
-  // Clamp within bounds
   nodes.forEach(n => {
-    n.x = Math.max(NODE_R + PADDING / 2, Math.min(width - NODE_R - PADDING / 2, n.x))
+    n.x = Math.max(NODE_R + 40, Math.min(width - NODE_R - 40, n.x))
   })
 
   return nodes
@@ -173,17 +174,14 @@ function computePressureMap(tasks: TimelineTask[]): WeekBucket[] {
   if (active.length === 0) return []
 
   const buckets = new Map<string, WeekBucket>()
-
   active.forEach(task => {
     if (!task.due_date) return
     const d = new Date(task.due_date + 'T12:00:00Z')
-    // Monday of that week
     const day = d.getUTCDay()
     const mondayOffset = day === 0 ? -6 : 1 - day
     const monday = new Date(d)
     monday.setUTCDate(monday.getUTCDate() + mondayOffset)
     const key = monday.toISOString().split('T')[0]
-
     if (!buckets.has(key)) {
       buckets.set(key, { weekStart: key, taskCount: 0, effortHours: 0, tasks: [] })
     }
@@ -194,6 +192,141 @@ function computePressureMap(tasks: TimelineTask[]): WeekBucket[] {
   })
 
   return Array.from(buckets.values()).sort((a, b) => a.weekStart.localeCompare(b.weekStart))
+}
+
+// ============================================================
+// Violation detection
+//
+// A dependency is violated when the downstream task (task_id)
+// is due BEFORE the upstream task (depends_on_task_id) + lag.
+// This is the Aeon "red line" concept — visible ordering conflict.
+// ============================================================
+function isDepViolated(dep: TimelineDep, nodeMap: Map<string, NodeLayout>): boolean {
+  const from = nodeMap.get(dep.depends_on_task_id)
+  const to   = nodeMap.get(dep.task_id)
+  if (!from || !to) return false
+  const fromDate = from.task.due_date
+  const toDate   = to.task.due_date
+  if (!fromDate || !toDate) return false
+  // Violated if downstream is due before upstream + lag
+  const minExpected = addDays(fromDate, dep.lag_days ?? 0)
+  return toDate < minExpected
+}
+
+// ============================================================
+// Violation Dialog
+//
+// Appears as a floating panel when clicking a red (violated)
+// dependency edge. Inspired by Aeon Timeline's three-option
+// resolution UI — framed for the music release context.
+// ============================================================
+interface ViolationDialogState {
+  dep: TimelineDep
+  fromTask: TimelineTask
+  toTask: TimelineTask
+  x: number
+  y: number
+}
+
+interface ViolationDialogProps extends ViolationDialogState {
+  onPushForward: () => void
+  onDismiss: () => void
+}
+
+function ViolationDialog({ dep, fromTask, toTask, x, y, onPushForward, onDismiss }: ViolationDialogProps) {
+  const expectedMinDate = addDays(fromTask.due_date ?? '', dep.lag_days ?? 0)
+  const daysOff = toTask.due_date ? Math.abs(daysBetween(toTask.due_date, expectedMinDate)) : 0
+
+  const panelW = 308
+  const clampedX = Math.max(16, Math.min(x - panelW / 2, window.innerWidth - panelW - 16))
+  const clampedY = Math.max(16, y - 8)
+
+  const truncate = (s: string, n: number) => s.length > n ? s.slice(0, n - 1) + '…' : s
+
+  return (
+    <>
+      {/* Click-outside overlay */}
+      <div
+        style={{ position: 'fixed', inset: 0, zIndex: 999 }}
+        onClick={onDismiss}
+      />
+      <div
+        style={{
+          position: 'fixed',
+          left: clampedX,
+          top: clampedY,
+          zIndex: 1000,
+          width: panelW,
+          background: 'var(--color-surface)',
+          border: '1px solid #f8717140',
+          borderRadius: 14,
+          padding: '14px 16px',
+          boxShadow: '0 16px 40px rgba(0,0,0,0.45)',
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          <span style={{ fontSize: 14, lineHeight: 1 }}>⚠</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text)' }}>
+            Dependency conflict
+          </span>
+        </div>
+
+        {/* Explanation */}
+        <p style={{ fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.65, marginBottom: 14 }}>
+          <span style={{ color: 'var(--color-text)', fontWeight: 600 }}>
+            {truncate(toTask.title, 28)}
+          </span>{' '}
+          is due {daysOff} day{daysOff !== 1 ? 's' : ''} too early —{' '}
+          <span style={{ color: 'var(--color-text)', fontWeight: 600 }}>
+            {truncate(fromTask.title, 28)}
+          </span>{' '}
+          needs to finish first
+          {(dep.lag_days ?? 0) > 0 ? ` (+ ${dep.lag_days}d buffer)` : ''}.
+        </p>
+
+        {/* Actions */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+          {/* Primary: push the downstream task forward */}
+          <button
+            onClick={e => { e.stopPropagation(); onPushForward() }}
+            style={{
+              background: '#f8717112',
+              border: '1px solid #f8717133',
+              borderRadius: 9,
+              padding: '8px 12px',
+              fontSize: 11,
+              fontWeight: 600,
+              color: '#f87171',
+              cursor: 'pointer',
+              textAlign: 'left',
+            }}
+          >
+            Push "{truncate(toTask.title, 22)}" → {formatDate(expectedMinDate)}
+          </button>
+
+          {/* Dismiss */}
+          <button
+            onClick={e => { e.stopPropagation(); onDismiss() }}
+            style={{
+              background: 'var(--color-surface-2)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 9,
+              padding: '8px 12px',
+              fontSize: 11,
+              fontWeight: 500,
+              color: 'var(--color-text-muted)',
+              cursor: 'pointer',
+              textAlign: 'left',
+            }}
+          >
+            Dismiss for now
+          </button>
+        </div>
+      </div>
+    </>
+  )
 }
 
 // ============================================================
@@ -217,7 +350,6 @@ function DetailPanel({ task, tasks, deps, onClose, onStatusChange, onDateChange,
   const dragStartH = useRef(0)
   const panelRef = useRef<HTMLDivElement>(null)
 
-  // Resize handle drag
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     setIsDragging(true)
@@ -240,7 +372,6 @@ function DetailPanel({ task, tasks, deps, onClose, onStatusChange, onDateChange,
     }
   }, [isDragging])
 
-  // Keyboard close
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -287,15 +418,13 @@ function DetailPanel({ task, tasks, deps, onClose, onStatusChange, onDateChange,
         />
       )}
 
-      {/* Panel handle / collapsed state */}
+      {/* Panel header */}
       <div
         className="flex items-center justify-between px-5 shrink-0"
         style={{
           height: 44,
-          cursor: isOpen ? 'default' : 'pointer',
           borderBottom: isOpen ? '1px solid var(--color-border)' : 'none',
         }}
-        onClick={!isOpen ? undefined : undefined}
       >
         <div className="flex items-center gap-3">
           <div
@@ -311,10 +440,7 @@ function DetailPanel({ task, tasks, deps, onClose, onStatusChange, onDateChange,
           {task && (
             <span
               className="text-xs px-2 py-0.5 rounded-full font-medium"
-              style={{
-                background: PHASE_COLORS[task.phase] + '22',
-                color: PHASE_COLORS[task.phase],
-              }}
+              style={{ background: PHASE_COLORS[task.phase] + '22', color: PHASE_COLORS[task.phase] }}
             >
               {task.phase}
             </span>
@@ -345,13 +471,11 @@ function DetailPanel({ task, tasks, deps, onClose, onStatusChange, onDateChange,
       {/* Panel body */}
       {isOpen && task && (
         <div className="flex-1 overflow-y-auto p-5 flex gap-6">
-          {/* Left: task info */}
           <div className="flex-1 min-w-0 flex flex-col gap-4">
             <p className="text-xs leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
               {task.description}
             </p>
 
-            {/* Metadata row */}
             <div className="flex gap-5 flex-wrap">
               <div>
                 <p className="text-xs font-medium mb-1" style={{ color: 'var(--color-text-muted)' }}>Due date</p>
@@ -368,9 +492,7 @@ function DetailPanel({ task, tasks, deps, onClose, onStatusChange, onDateChange,
                     }}
                     onBlur={(e) => {
                       setEditingDate(false)
-                      if (e.target.value && e.target.value !== task.due_date) {
-                        onDateChange(task, e.target.value)
-                      }
+                      if (e.target.value && e.target.value !== task.due_date) onDateChange(task, e.target.value)
                     }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
@@ -435,7 +557,7 @@ function DetailPanel({ task, tasks, deps, onClose, onStatusChange, onDateChange,
             </div>
           </div>
 
-          {/* Right: dependency chains */}
+          {/* Dependency chains */}
           <div className="flex flex-col gap-4 min-w-[220px]">
             {depTasks.length > 0 && (
               <div>
@@ -451,16 +573,9 @@ function DetailPanel({ task, tasks, deps, onClose, onStatusChange, onDateChange,
                         border: `1px solid ${dt.status === 'complete' ? '#10b98133' : 'var(--color-border)'}`,
                       }}
                     >
-                      <div
-                        className="w-1.5 h-1.5 rounded-full shrink-0"
-                        style={{ background: PHASE_COLORS[dt.phase] }}
-                      />
-                      <span className="text-xs truncate flex-1" style={{ color: 'var(--color-text)' }}>
-                        {dt.title}
-                      </span>
-                      {dt.status === 'complete' && (
-                        <span className="text-xs shrink-0" style={{ color: '#10b981' }}>✓</span>
-                      )}
+                      <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: PHASE_COLORS[dt.phase] }} />
+                      <span className="text-xs truncate flex-1" style={{ color: 'var(--color-text)' }}>{dt.title}</span>
+                      {dt.status === 'complete' && <span className="text-xs shrink-0" style={{ color: '#10b981' }}>✓</span>}
                     </button>
                   ))}
                 </div>
@@ -476,18 +591,10 @@ function DetailPanel({ task, tasks, deps, onClose, onStatusChange, onDateChange,
                       key={bt.id}
                       onClick={() => onNavigateToTask(bt.id)}
                       className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left hover:opacity-80 transition-opacity"
-                      style={{
-                        background: 'var(--color-surface-2)',
-                        border: '1px solid var(--color-border)',
-                      }}
+                      style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
                     >
-                      <div
-                        className="w-1.5 h-1.5 rounded-full shrink-0"
-                        style={{ background: PHASE_COLORS[bt.phase] }}
-                      />
-                      <span className="text-xs truncate flex-1" style={{ color: 'var(--color-text-muted)' }}>
-                        {bt.title}
-                      </span>
+                      <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: PHASE_COLORS[bt.phase] }} />
+                      <span className="text-xs truncate flex-1" style={{ color: 'var(--color-text-muted)' }}>{bt.title}</span>
                       <span className="text-xs shrink-0" style={{ color: 'var(--color-text-muted)' }}>→</span>
                     </button>
                   ))}
@@ -513,6 +620,7 @@ interface GraphViewProps {
   onSelectTask: (id: string | null) => void
   onHoverTask: (id: string | null) => void
   showPressure: boolean
+  onEdgeClick?: (dep: TimelineDep, fromTask: TimelineTask, toTask: TimelineTask, x: number, y: number) => void
 }
 
 function GraphView({
@@ -524,6 +632,7 @@ function GraphView({
   onSelectTask,
   onHoverTask,
   showPressure,
+  onEdgeClick,
 }: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(900)
@@ -532,20 +641,15 @@ function GraphView({
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const ro = new ResizeObserver(entries => {
-      setWidth(entries[0].contentRect.width)
-    })
+    const ro = new ResizeObserver(entries => setWidth(entries[0].contentRect.width))
     ro.observe(el)
     setWidth(el.getBoundingClientRect().width)
     return () => ro.disconnect()
   }, [])
 
-  // Stagger-in animation on mount
   useEffect(() => {
     setMounted(false)
-    const t = setTimeout(() => {
-      setMounted(true)
-    }, 50)
+    const t = setTimeout(() => setMounted(true), 50)
     return () => clearTimeout(t)
   }, [tasks.length])
 
@@ -556,7 +660,6 @@ function GraphView({
   const nodes = useMemo(() => computeGraphLayout(tasks, deps, width), [tasks, deps, width])
   const nodeMap = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
 
-  // For hover: highlight ancestors and descendants of hovered node
   const hoveredAncestors = useMemo(() => {
     if (!hoveredTaskId) return new Set<string>()
     const result = new Set<string>()
@@ -591,11 +694,9 @@ function GraphView({
 
   const svgHeight = PADDING * 2 + PHASES.length * PHASE_HEIGHT
 
-  // Pressure map buckets
   const pressureBuckets = useMemo(() => showPressure ? computePressureMap(tasks) : [], [tasks, showPressure])
   const maxPressure = useMemo(() => Math.max(1, ...pressureBuckets.map(b => b.taskCount)), [pressureBuckets])
 
-  // Compute x for a date on the same axis as the nodes
   const dateToX = useCallback((isoDate: string): number => {
     const allDates = tasks.map(t => t.due_date ?? '').filter(Boolean).sort()
     if (allDates.length === 0) return 0
@@ -603,8 +704,7 @@ function GraphView({
     const maxDate = allDates[allDates.length - 1]
     const totalDays = Math.max(daysBetween(minDate, maxDate), 1)
     const usableWidth = width - PADDING * 2
-    const dayOff = daysBetween(minDate, isoDate)
-    return PADDING + (dayOff / totalDays) * usableWidth
+    return PADDING + (daysBetween(minDate, isoDate) / totalDays) * usableWidth
   }, [tasks, width])
 
   if (tasks.length === 0) {
@@ -622,12 +722,40 @@ function GraphView({
   const showToday = todayISO >= minDate && todayISO <= maxDate
   const todayX = showToday ? dateToX(todayISO) : null
 
+  // Count violations for the badge
+  const violationCount = deps.filter(dep => isDepViolated(dep, nodeMap)).length
+
   return (
     <div
       ref={containerRef}
       className="relative flex-1 overflow-auto"
       style={{ minHeight: svgHeight + 32 }}
     >
+      {/* Violation count badge */}
+      {violationCount > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 10,
+            right: 16,
+            zIndex: 10,
+            background: '#f8717115',
+            border: '1px solid #f8717140',
+            borderRadius: 8,
+            padding: '4px 10px',
+            fontSize: 11,
+            fontWeight: 600,
+            color: '#f87171',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+            pointerEvents: 'none',
+          }}
+        >
+          ⚠ {violationCount} conflict{violationCount !== 1 ? 's' : ''} — click red lines to resolve
+        </div>
+      )}
+
       {/* Phase lane labels */}
       <div
         className="absolute left-0 top-0 flex flex-col pointer-events-none"
@@ -639,12 +767,7 @@ function GraphView({
           return (
             <div
               key={phase}
-              style={{
-                height: PHASE_HEIGHT,
-                display: 'flex',
-                alignItems: 'center',
-                paddingLeft: 8,
-              }}
+              style={{ height: PHASE_HEIGHT, display: 'flex', alignItems: 'center', paddingLeft: 8 }}
             >
               <span
                 className="text-xs font-semibold"
@@ -663,11 +786,7 @@ function GraphView({
         })}
       </div>
 
-      <svg
-        width={width}
-        height={svgHeight}
-        style={{ display: 'block', overflow: 'visible' }}
-      >
+      <svg width={width} height={svgHeight} style={{ display: 'block', overflow: 'visible' }}>
         {/* Phase lane backgrounds */}
         {PHASES.map((phase, i) => {
           const hasTasks = tasks.some(t => t.phase === phase)
@@ -676,10 +795,7 @@ function GraphView({
           return (
             <rect
               key={phase}
-              x={0}
-              y={y}
-              width={width}
-              height={PHASE_HEIGHT}
+              x={0} y={y} width={width} height={PHASE_HEIGHT}
               fill={i % 2 === 0 ? 'var(--color-surface)' : 'transparent'}
               opacity={0.4}
             />
@@ -690,19 +806,17 @@ function GraphView({
         {showPressure && pressureBuckets.map((bucket) => {
           const x = dateToX(bucket.weekStart)
           const intensity = bucket.taskCount / maxPressure
-          const hue = 45 - intensity * 45 // gold → red
+          const hue = 45 - intensity * 45
           const alpha = 0.12 + intensity * 0.22
           return (
-            <g key={bucket.weekStart}>
-              <rect
-                x={x}
-                y={PADDING - 30}
-                width={Math.max(dateToX(addDays(bucket.weekStart, 7)) - x, 20)}
-                height={svgHeight - PADDING + 30}
-                fill={`hsla(${hue}, 90%, 60%, ${alpha})`}
-                rx={4}
-              />
-            </g>
+            <rect
+              key={bucket.weekStart}
+              x={x} y={PADDING - 30}
+              width={Math.max(dateToX(addDays(bucket.weekStart, 7)) - x, 20)}
+              height={svgHeight - PADDING + 30}
+              fill={`hsla(${hue}, 90%, 60%, ${alpha})`}
+              rx={4}
+            />
           )
         })}
 
@@ -710,69 +824,17 @@ function GraphView({
         {todayX !== null && (
           <g>
             <line
-              x1={todayX}
-              y1={PADDING - 20}
-              x2={todayX}
-              y2={svgHeight - PADDING + 20}
-              stroke="var(--color-accent)"
-              strokeWidth={1.5}
-              strokeDasharray="4 3"
-              opacity={0.7}
+              x1={todayX} y1={PADDING - 20} x2={todayX} y2={svgHeight - PADDING + 20}
+              stroke="var(--color-accent)" strokeWidth={1.5} strokeDasharray="4 3" opacity={0.7}
             />
             <circle cx={todayX} cy={PADDING - 20} r={3} fill="var(--color-accent)" />
-            <text
-              x={todayX + 5}
-              y={PADDING - 22}
-              fill="var(--color-accent)"
-              fontSize={9}
-              fontWeight="600"
-              opacity={0.85}
-            >
+            <text x={todayX + 5} y={PADDING - 22} fill="var(--color-accent)" fontSize={9} fontWeight="600" opacity={0.85}>
               TODAY
             </text>
           </g>
         )}
 
-        {/* Dependency edges */}
-        {deps.map((dep, i) => {
-          const from = nodeMap.get(dep.depends_on_task_id)
-          const to = nodeMap.get(dep.task_id)
-          if (!from || !to) return null
-
-          const isHighlighted =
-            (hoveredTaskId === dep.task_id || hoveredTaskId === dep.depends_on_task_id) ||
-            (hoveredAncestors.has(dep.depends_on_task_id) && hoveredDescendants.has(dep.task_id)) ||
-            (hoveredTaskId && (hoveredAncestors.has(dep.task_id) || hoveredDescendants.has(dep.task_id) ||
-              dep.task_id === hoveredTaskId || dep.depends_on_task_id === hoveredTaskId))
-
-          const isCascading = cascadingIds.has(dep.task_id) || cascadingIds.has(dep.depends_on_task_id)
-
-          // Cubic bezier: from node right edge to to node left edge
-          const sx = from.x + NODE_R
-          const sy = from.y
-          const ex = to.x - NODE_R
-          const ey = to.y
-          const cx1 = sx + (ex - sx) * 0.4
-          const cy1 = sy
-          const cx2 = ex - (ex - sx) * 0.4
-          const cy2 = ey
-
-          const dim = hoveredTaskId && !isHighlighted
-
-          return (
-            <path
-              key={`${dep.task_id}-${dep.depends_on_task_id}-${i}`}
-              d={`M ${sx} ${sy} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${ex} ${ey}`}
-              fill="none"
-              stroke={isCascading ? '#f59e0b' : isHighlighted ? 'var(--color-accent)' : 'var(--color-border)'}
-              strokeWidth={isCascading ? 2 : isHighlighted ? 1.5 : 1}
-              opacity={dim ? 0.15 : isCascading ? 0.9 : isHighlighted ? 0.8 : 0.35}
-              style={{ transition: 'opacity 0.2s, stroke 0.3s' }}
-            />
-          )
-        })}
-
-        {/* Arrowheads */}
+        {/* ── Dependency edges — Aeon-inspired violation coloring ── */}
         <defs>
           <marker id="arrow-default" markerWidth="8" markerHeight="8" refX="4" refY="3" orient="auto">
             <path d="M0,0 L8,3 L0,6 Z" fill="var(--color-border)" opacity={0.4} />
@@ -783,7 +845,99 @@ function GraphView({
           <marker id="arrow-cascade" markerWidth="8" markerHeight="8" refX="4" refY="3" orient="auto">
             <path d="M0,0 L8,3 L0,6 Z" fill="#f59e0b" />
           </marker>
+          <marker id="arrow-violated" markerWidth="8" markerHeight="8" refX="4" refY="3" orient="auto">
+            <path d="M0,0 L8,3 L0,6 Z" fill="#f87171" />
+          </marker>
         </defs>
+
+        {deps.map((dep, i) => {
+          const from = nodeMap.get(dep.depends_on_task_id)
+          const to   = nodeMap.get(dep.task_id)
+          if (!from || !to) return null
+
+          const violated = isDepViolated(dep, nodeMap)
+
+          const isHighlighted =
+            hoveredTaskId === dep.task_id ||
+            hoveredTaskId === dep.depends_on_task_id ||
+            (hoveredTaskId && (
+              hoveredAncestors.has(dep.depends_on_task_id) ||
+              hoveredDescendants.has(dep.task_id) ||
+              dep.task_id === hoveredTaskId ||
+              dep.depends_on_task_id === hoveredTaskId
+            ))
+
+          const isCascading = cascadingIds.has(dep.task_id) || cascadingIds.has(dep.depends_on_task_id)
+          const dim = hoveredTaskId && !isHighlighted && !violated
+
+          // Bezier path
+          const sx = from.x + NODE_R
+          const sy = from.y
+          const ex = to.x - NODE_R
+          const ey = to.y
+          const cx1 = sx + (ex - sx) * 0.4
+          const cy1 = sy
+          const cx2 = ex - (ex - sx) * 0.4
+          const cy2 = ey
+          const pathD = `M ${sx} ${sy} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${ex} ${ey}`
+
+          // Color logic — violated = red, otherwise existing logic
+          const edgeColor = violated
+            ? '#f87171'
+            : isCascading
+              ? '#f59e0b'
+              : isHighlighted
+                ? 'var(--color-accent)'
+                : 'var(--color-border)'
+
+          const edgeWidth = violated
+            ? 2
+            : isCascading ? 2 : isHighlighted ? 1.5 : 1
+
+          const edgeOpacity = violated
+            ? 0.9
+            : dim ? 0.15 : isCascading ? 0.9 : isHighlighted ? 0.8 : 0.35
+
+          const markerId = violated
+            ? 'arrow-violated'
+            : isCascading
+              ? 'arrow-cascade'
+              : isHighlighted
+                ? 'arrow-highlight'
+                : 'arrow-default'
+
+          return (
+            <g key={`${dep.task_id}-${dep.depends_on_task_id}-${i}`}>
+              {/* Visible edge */}
+              <path
+                d={pathD}
+                fill="none"
+                stroke={edgeColor}
+                strokeWidth={edgeWidth}
+                opacity={edgeOpacity}
+                markerEnd={`url(#${markerId})`}
+                style={{ transition: 'opacity 0.2s, stroke 0.3s' }}
+                // Animated dash for violations to draw the eye
+                strokeDasharray={violated ? '5 3' : undefined}
+              />
+
+              {/* Wide invisible hit area — clickable for violated edges */}
+              {violated && onEdgeClick && (
+                <path
+                  d={pathD}
+                  fill="none"
+                  stroke="transparent"
+                  strokeWidth={14}
+                  style={{ cursor: 'pointer' }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onEdgeClick(dep, from.task, to.task, e.clientX, e.clientY)
+                  }}
+                />
+              )}
+            </g>
+          )
+        })}
 
         {/* Task nodes */}
         {nodes.map((node, idx) => {
@@ -806,13 +960,11 @@ function GraphView({
                 ? '#f87171'
                 : phaseColor
 
-          // Staggered entry animation via CSS custom property
           const enterDelay = idx * 30
 
           return (
             <g
               key={task.id}
-              transform={`translate(${node.x}, ${node.y})`}
               style={{
                 cursor: 'pointer',
                 opacity: mounted ? (dim ? 0.2 : 1) : 0,
@@ -825,32 +977,13 @@ function GraphView({
               onMouseEnter={() => onHoverTask(task.id)}
               onMouseLeave={() => onHoverTask(null)}
             >
-              {/* Cascade pulse ring */}
               {isCascading && (
-                <circle
-                  r={NODE_R + 8}
-                  fill="none"
-                  stroke="#f59e0b"
-                  strokeWidth={2}
-                  opacity={0.6}
-                  style={{
-                    animation: 'cascadePulse 1s ease-out forwards',
-                  }}
-                />
+                <circle r={NODE_R + 8} fill="none" stroke="#f59e0b" strokeWidth={2} opacity={0.6}
+                  style={{ animation: 'cascadePulse 1s ease-out forwards' }} />
               )}
-
-              {/* Selection ring */}
               {isSelected && (
-                <circle
-                  r={NODE_R + 5}
-                  fill="none"
-                  stroke="var(--color-accent)"
-                  strokeWidth={2}
-                  opacity={0.8}
-                />
+                <circle r={NODE_R + 5} fill="none" stroke="var(--color-accent)" strokeWidth={2} opacity={0.8} />
               )}
-
-              {/* Node body */}
               <circle
                 r={NODE_R}
                 fill={`${nodeColor}22`}
@@ -858,42 +991,22 @@ function GraphView({
                 strokeWidth={isSelected || isHovered ? 2.5 : 1.5}
                 style={{ transition: 'stroke-width 0.15s, fill 0.2s' }}
               />
-
-              {/* Status icon */}
-              {task.status === 'complete' && (
-                <text textAnchor="middle" dy="0.35em" fontSize={14} fill="#10b981">✓</text>
-              )}
-              {task.status === 'in_progress' && (
-                <circle r={5} fill="#f59e0b" />
-              )}
-              {task.status === 'skipped' && (
-                <text textAnchor="middle" dy="0.35em" fontSize={12} fill="#6b7280">—</text>
-              )}
-              {(task.status === 'pending') && (
-                <circle r={4} fill="none" stroke={phaseColor} strokeWidth={1.5} />
-              )}
-
-              {/* External marker */}
-              {task.is_external && (
-                <text x={NODE_R - 6} y={-NODE_R + 6} fontSize={9} fill="#f59e0b">↗</text>
-              )}
-
-              {/* Label below node */}
+              {task.status === 'complete' && <text textAnchor="middle" dy="0.35em" fontSize={14} fill="#10b981">✓</text>}
+              {task.status === 'in_progress' && <circle r={5} fill="#f59e0b" />}
+              {task.status === 'skipped' && <text textAnchor="middle" dy="0.35em" fontSize={12} fill="#6b7280">—</text>}
+              {task.status === 'pending' && <circle r={4} fill="none" stroke={phaseColor} strokeWidth={1.5} />}
+              {task.is_external && <text x={NODE_R - 6} y={-NODE_R + 6} fontSize={9} fill="#f59e0b">↗</text>}
               <text
-                textAnchor="middle"
-                y={NODE_R + 14}
+                textAnchor="middle" y={NODE_R + 14}
                 fontSize={9.5}
                 fontWeight={isSelected || isHovered ? '600' : '400'}
                 fill={isSelected || isHovered ? 'var(--color-text)' : 'var(--color-text-muted)'}
-                style={{ transition: 'fill 0.15s, font-weight 0.15s', pointerEvents: 'none' }}
+                style={{ transition: 'fill 0.15s', pointerEvents: 'none' }}
               >
                 {task.title.length > 16 ? task.title.slice(0, 15) + '…' : task.title}
               </text>
-
-              {/* Due date below label */}
               <text
-                textAnchor="middle"
-                y={NODE_R + 26}
+                textAnchor="middle" y={NODE_R + 26}
                 fontSize={8}
                 fill={overdue ? '#f87171' : soon ? '#f59e0b' : 'var(--color-text-muted)'}
                 opacity={0.8}
@@ -970,10 +1083,7 @@ function GanttView({
   const LABEL_W = 180
   const PADDING_TOP = 50
 
-  const allDates = useMemo(() => {
-    const dates = tasks.map(t => t.due_date ?? '').filter(Boolean).sort()
-    return dates
-  }, [tasks])
+  const allDates = useMemo(() => tasks.map(t => t.due_date ?? '').filter(Boolean).sort(), [tasks])
 
   const minDate = allDates[0] ?? new Date().toISOString().split('T')[0]
   const maxDateRaw = allDates[allDates.length - 1] ?? addDays(minDate, 30)
@@ -982,16 +1092,14 @@ function GanttView({
   const chartWidth = width - LABEL_W - 24
 
   const dateToChartX = useCallback((isoDate: string) => {
-    const d = daysBetween(minDate, isoDate)
-    return LABEL_W + (d / totalDays) * chartWidth
-  }, [minDate, totalDays, chartWidth, LABEL_W])
+    return LABEL_W + (daysBetween(minDate, isoDate) / totalDays) * chartWidth
+  }, [minDate, totalDays, chartWidth])
 
   const chartXToDate = useCallback((x: number): string => {
     const days = Math.round(((x - LABEL_W) / chartWidth) * totalDays)
     return addDays(minDate, Math.max(0, days))
-  }, [minDate, totalDays, chartWidth, LABEL_W])
+  }, [minDate, totalDays, chartWidth])
 
-  // Phase-sorted tasks
   const sortedTasks = useMemo(() =>
     [...tasks].sort((a, b) => {
       const pi = PHASES.indexOf(a.phase) - PHASES.indexOf(b.phase)
@@ -1007,7 +1115,6 @@ function GanttView({
   const svgHeight = PADDING_TOP + sortedTasks.length * (ROW_H + ROW_GAP) + 20
   const todayISO = new Date().toISOString().split('T')[0]
 
-  // Drag handlers
   const startDrag = useCallback((e: React.MouseEvent, task: TimelineTask) => {
     e.stopPropagation()
     e.preventDefault()
@@ -1021,17 +1128,13 @@ function GanttView({
     if (!draggingId) return
     const container = containerRef.current
     if (!container) return
-
     const onMove = (e: MouseEvent) => {
       const containerRect = container.getBoundingClientRect()
-      const relX = e.clientX - containerRect.left
-      const newDate = chartXToDate(relX)
-      setDragPreviewDate(newDate)
+      setDragPreviewDate(chartXToDate(e.clientX - containerRect.left))
     }
     const onUp = (e: MouseEvent) => {
       const containerRect = container.getBoundingClientRect()
-      const relX = e.clientX - containerRect.left
-      const newDate = chartXToDate(relX)
+      const newDate = chartXToDate(e.clientX - containerRect.left)
       const task = sortedTasks.find(t => t.id === draggingId)
       if (task && newDate !== dragOrigDate.current && onDragDate) {
         onDragDate(task, newDate)
@@ -1047,7 +1150,6 @@ function GanttView({
     }
   }, [draggingId, chartXToDate, sortedTasks, onDragDate])
 
-  // Week tick marks
   const weekTicks = useMemo(() => {
     const ticks: { isoDate: string; x: number; label: string }[] = []
     let curr = minDate
@@ -1055,8 +1157,7 @@ function GanttView({
       const x = dateToChartX(curr)
       const [y, m, d] = curr.split('-').map(Number)
       const dt = new Date(y, m - 1, d)
-      const label = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-      ticks.push({ isoDate: curr, x, label })
+      ticks.push({ isoDate: curr, x, label: dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) })
       curr = addDays(curr, 7)
     }
     return ticks
@@ -1070,26 +1171,22 @@ function GanttView({
     >
       <svg width={width} height={svgHeight} style={{ display: 'block' }}>
 
-        {/* Pressure map background */}
+        {/* Pressure map */}
         {showPressure && pressureBuckets.map(bucket => {
           const x = dateToChartX(bucket.weekStart)
           const endX = dateToChartX(addDays(bucket.weekStart, 7))
           const intensity = bucket.taskCount / maxPressure
           const hue = 45 - intensity * 45
-          const alpha = 0.1 + intensity * 0.2
           return (
             <rect
               key={bucket.weekStart}
-              x={x}
-              y={0}
-              width={endX - x}
-              height={svgHeight}
-              fill={`hsla(${hue}, 90%, 60%, ${alpha})`}
+              x={x} y={0} width={endX - x} height={svgHeight}
+              fill={`hsla(${hue}, 90%, 60%, ${0.1 + intensity * 0.2})`}
             />
           )
         })}
 
-        {/* Row backgrounds (alternating) */}
+        {/* Row backgrounds */}
         {sortedTasks.map((task, i) => (
           <rect
             key={`bg-${task.id}`}
@@ -1107,20 +1204,8 @@ function GanttView({
         {/* Week grid lines */}
         {weekTicks.map(tick => (
           <g key={tick.isoDate}>
-            <line
-              x1={tick.x} y1={PADDING_TOP - 8}
-              x2={tick.x} y2={svgHeight}
-              stroke="var(--color-border)"
-              strokeWidth={0.5}
-              opacity={0.4}
-            />
-            <text
-              x={tick.x + 4}
-              y={PADDING_TOP - 14}
-              fontSize={9}
-              fill="var(--color-text-muted)"
-              opacity={0.7}
-            >
+            <line x1={tick.x} y1={PADDING_TOP - 8} x2={tick.x} y2={svgHeight} stroke="var(--color-border)" strokeWidth={0.5} opacity={0.4} />
+            <text x={tick.x + 4} y={PADDING_TOP - 14} fontSize={9} fill="var(--color-text-muted)" opacity={0.7}>
               {tick.label}
             </text>
           </g>
@@ -1130,12 +1215,8 @@ function GanttView({
         {todayISO >= minDate && todayISO <= maxDate && (
           <g>
             <line
-              x1={dateToChartX(todayISO)} y1={0}
-              x2={dateToChartX(todayISO)} y2={svgHeight}
-              stroke="var(--color-accent)"
-              strokeWidth={1.5}
-              strokeDasharray="4 3"
-              opacity={0.7}
+              x1={dateToChartX(todayISO)} y1={0} x2={dateToChartX(todayISO)} y2={svgHeight}
+              stroke="var(--color-accent)" strokeWidth={1.5} strokeDasharray="4 3" opacity={0.7}
             />
             <circle cx={dateToChartX(todayISO)} cy={PADDING_TOP - 4} r={3} fill="var(--color-accent)" />
           </g>
@@ -1157,7 +1238,6 @@ function GanttView({
                 : soon ? '#f59e0b'
                   : phaseColor
 
-          // Bar: from start (offset from phase start) to due_date
           const taskDate = isDraggingThis && dragPreviewDate ? dragPreviewDate : (task.due_date ?? minDate)
           const barEndX = dateToChartX(taskDate)
           const barStartX = Math.max(LABEL_W, barEndX - Math.max(16, (task.effort_hours ?? 1) * 4))
@@ -1165,7 +1245,11 @@ function GanttView({
           const barH = 18
           const barY = y + (ROW_H - barH) / 2
 
-          // Enter animation: bars grow from left
+          // Progress fill — Aeon-inspired partial fill for in-progress tasks
+          const progressFill = task.status === 'complete' ? 1
+            : task.status === 'in_progress' ? 0.5
+              : 0
+
           const enterDelay = i * 20
 
           return (
@@ -1178,34 +1262,25 @@ function GanttView({
             >
               {/* Label */}
               <text
-                x={8}
-                y={y + ROW_H / 2 + 1}
+                x={8} y={y + ROW_H / 2 + 1}
                 fontSize={10}
                 fontWeight={isSelected ? '600' : '400'}
                 fill={isSelected ? 'var(--color-text)' : 'var(--color-text-muted)'}
-                style={{ transition: 'fill 0.15s' }}
                 dominantBaseline="middle"
+                style={{ transition: 'fill 0.15s' }}
               >
                 {task.title.length > 22 ? task.title.slice(0, 21) + '…' : task.title}
               </text>
 
               {/* Phase dot */}
-              <circle
-                cx={LABEL_W - 12}
-                cy={y + ROW_H / 2}
-                r={4}
-                fill={phaseColor}
-                opacity={0.8}
-              />
+              <circle cx={LABEL_W - 12} cy={y + ROW_H / 2} r={4} fill={phaseColor} opacity={0.8} />
 
-              {/* Bar */}
+              {/* Bar shell */}
               <rect
-                x={barStartX}
-                y={barY}
-                width={mounted ? barW : 0}
-                height={barH}
+                x={barStartX} y={barY}
+                width={mounted ? barW : 0} height={barH}
                 rx={5}
-                fill={`${barColor}30`}
+                fill={`${barColor}22`}
                 stroke={barColor}
                 strokeWidth={isSelected ? 2 : 1}
                 style={{
@@ -1213,63 +1288,52 @@ function GanttView({
                 }}
               />
 
-              {/* Drag handle (right edge of bar) */}
+              {/* Progress fill — Aeon-inspired completion indicator */}
+              {progressFill > 0 && (
+                <rect
+                  x={barStartX} y={barY}
+                  width={barW * progressFill} height={barH}
+                  rx={5}
+                  fill={barColor}
+                  opacity={0.35}
+                  style={{
+                    transition: isDraggingThis ? 'none' : `width 0.5s cubic-bezier(0.4,0,0.2,1) ${enterDelay}ms`,
+                  }}
+                />
+              )}
+
+              {/* Drag handle */}
               <rect
-                x={barEndX - 6}
-                y={barY + 2}
-                width={6}
-                height={barH - 4}
+                x={barEndX - 6} y={barY + 2}
+                width={6} height={barH - 4}
                 rx={2}
-                fill={barColor}
-                opacity={0.7}
+                fill={barColor} opacity={0.7}
                 style={{ cursor: 'ew-resize' }}
                 onMouseDown={(e) => startDrag(e, task)}
               />
 
-              {/* Complete fill sweep */}
+              {/* Complete tick */}
               {task.status === 'complete' && (
-                <rect
-                  x={barStartX}
-                  y={barY}
-                  width={barW}
-                  height={barH}
-                  rx={5}
-                  fill={barColor}
-                  opacity={0.35}
-                />
+                <text x={barStartX + 6} y={barY + barH / 2 + 1} fontSize={9} fill="#10b981" dominantBaseline="middle">✓</text>
               )}
 
-              {/* Status indicator */}
-              {task.status === 'complete' && (
-                <text
-                  x={barStartX + 6}
-                  y={barY + barH / 2 + 1}
-                  fontSize={9}
-                  fill="#10b981"
-                  dominantBaseline="middle"
-                >✓</text>
+              {/* In-progress half-fill label */}
+              {task.status === 'in_progress' && (
+                <text x={barStartX + 6} y={barY + barH / 2 + 1} fontSize={8} fill="#f59e0b" dominantBaseline="middle" opacity={0.85}>···</text>
               )}
 
               {/* Cascade shimmer */}
               {isCascading && (
                 <rect
-                  x={barStartX}
-                  y={barY}
-                  width={barW}
-                  height={barH}
-                  rx={5}
-                  fill="none"
-                  stroke="#f59e0b"
-                  strokeWidth={2}
-                  opacity={0.8}
+                  x={barStartX} y={barY} width={barW} height={barH} rx={5}
+                  fill="none" stroke="#f59e0b" strokeWidth={2} opacity={0.8}
                   style={{ animation: 'cascadeShimmer 0.8s ease-out forwards' }}
                 />
               )}
 
               {/* Due date label */}
               <text
-                x={barEndX + 6}
-                y={y + ROW_H / 2 + 1}
+                x={barEndX + 6} y={y + ROW_H / 2 + 1}
                 fontSize={9}
                 fill={overdue ? '#f87171' : soon ? '#f59e0b' : 'var(--color-text-muted)'}
                 dominantBaseline="middle"
@@ -1313,16 +1377,12 @@ function PressureTooltip({ buckets, maxPressure }: { buckets: WeekBucket[]; maxP
             onMouseEnter={() => setHovered(bucket)}
             onMouseLeave={() => setHovered(null)}
           >
-            <div
-              style={{
-                width: 10,
-                height: 20,
-                borderRadius: 2,
-                background: `hsla(${hue}, 90%, 60%, ${0.25 + intensity * 0.65})`,
-                border: '1px solid var(--color-border)',
-                cursor: 'default',
-              }}
-            />
+            <div style={{
+              width: 10, height: 20, borderRadius: 2,
+              background: `hsla(${hue}, 90%, 60%, ${0.25 + intensity * 0.65})`,
+              border: '1px solid var(--color-border)',
+              cursor: 'default',
+            }} />
             {hovered === bucket && (
               <div
                 className="absolute bottom-full mb-1 left-1/2 z-50 px-2.5 py-1.5 rounded-lg text-xs whitespace-nowrap"
@@ -1336,9 +1396,7 @@ function PressureTooltip({ buckets, maxPressure }: { buckets: WeekBucket[]; maxP
               >
                 <p className="font-semibold">{formatDateShort(bucket.weekStart)} week</p>
                 <p style={{ color: 'var(--color-text-muted)' }}>{bucket.taskCount} tasks · {bucket.effortHours}h</p>
-                {bucket.taskCount >= maxPressure && (
-                  <p style={{ color: '#f87171' }}>⚠ Heaviest week</p>
-                )}
+                {bucket.taskCount >= maxPressure && <p style={{ color: '#f87171' }}>⚠ Heaviest week</p>}
               </div>
             )}
           </div>
@@ -1364,6 +1422,7 @@ export default function TimelineView({
   const [showPressure, setShowPressure] = useState(false)
   const [cascadingIds, setCascadingIds] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
+  const [violationDialog, setViolationDialog] = useState<ViolationDialogState | null>(null)
 
   const selectedTask = useMemo(
     () => tasks.find(t => t.id === selectedTaskId) ?? null,
@@ -1373,7 +1432,7 @@ export default function TimelineView({
   const pressureBuckets = useMemo(() => computePressureMap(tasks), [tasks])
   const maxPressure = useMemo(() => Math.max(1, ...pressureBuckets.map(b => b.taskCount)), [pressureBuckets])
 
-  // Keyboard shortcut: G = graph, T = timeline, Tab = cycle, Escape = deselect
+  // Keyboard shortcuts: G / T / Tab / Escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName
@@ -1384,30 +1443,28 @@ export default function TimelineView({
         e.preventDefault()
         setView(v => v === 'graph' ? 'gantt' : 'graph')
       }
-      if (e.key === 'Escape') setSelectedTaskId(null)
+      if (e.key === 'Escape') {
+        setSelectedTaskId(null)
+        setViolationDialog(null)
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
-  // Flash cascade effect
   const flashCascade = useCallback((ids: string[]) => {
-    const s = new Set(ids)
-    setCascadingIds(s)
+    setCascadingIds(new Set(ids))
     setTimeout(() => setCascadingIds(new Set()), 1500)
   }, [])
 
-  // Handle task date change (from detail panel or gantt drag)
   const handleDateChange = useCallback(async (task: TimelineTask, newDate: string) => {
     if (!newDate || newDate === task.due_date) return
     setSaving(true)
 
     const result = cascadeFromTask(task.id, newDate, tasks, deps)
-
-    const updatedTasks = tasks.map(t => {
-      if (result.updates[t.id]) return { ...t, due_date: result.updates[t.id] }
-      return t
-    })
+    const updatedTasks = tasks.map(t =>
+      result.updates[t.id] ? { ...t, due_date: result.updates[t.id] } : t
+    )
     onTasksChange(updatedTasks)
 
     const affected = Object.keys(result.updates).filter(id => id !== task.id)
@@ -1422,17 +1479,35 @@ export default function TimelineView({
     setSaving(false)
   }, [tasks, deps, onTasksChange, onCascade, flashCascade])
 
-  // Handle status change
   const handleStatusChange = useCallback(async (task: TimelineTask, status: TaskStatus) => {
     const updated = tasks.map(t => t.id === task.id ? { ...t, status } : t)
     onTasksChange(updated)
     await supabase.from('tasks').update({ status }).eq('id', task.id)
   }, [tasks, onTasksChange])
 
-  // Navigate to task in current view (select it)
   const navigateToTask = useCallback((taskId: string) => {
     setSelectedTaskId(taskId)
   }, [])
+
+  // Violation edge click handler
+  const handleEdgeClick = useCallback((
+    dep: TimelineDep,
+    fromTask: TimelineTask,
+    toTask: TimelineTask,
+    x: number,
+    y: number
+  ) => {
+    setViolationDialog({ dep, fromTask, toTask, x, y })
+  }, [])
+
+  // Resolve: push the downstream task to the expected date
+  const handleViolationResolve = useCallback(() => {
+    if (!violationDialog) return
+    const { dep, fromTask, toTask } = violationDialog
+    const expectedDate = addDays(fromTask.due_date ?? '', dep.lag_days ?? 0)
+    setViolationDialog(null)
+    handleDateChange(toTask, expectedDate)
+  }, [violationDialog, handleDateChange])
 
   return (
     <div
@@ -1443,7 +1518,7 @@ export default function TimelineView({
         height: 680,
       }}
     >
-      {/* ── Toolbar — Ableton-style view controls ── */}
+      {/* ── Toolbar ── */}
       <div
         className="flex items-center gap-3 px-4 shrink-0"
         style={{
@@ -1452,7 +1527,7 @@ export default function TimelineView({
           background: 'var(--color-surface)',
         }}
       >
-        {/* View toggle — equal-rank buttons like Ableton Session/Arrangement */}
+        {/* View toggle */}
         <div
           className="flex rounded-lg overflow-hidden shrink-0"
           style={{ border: '1px solid var(--color-border)' }}
@@ -1490,13 +1565,12 @@ export default function TimelineView({
             <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
               <rect x="1" y="3" width="8" height="2" rx="1" fill="currentColor" opacity="0.8"/>
               <rect x="4" y="7" width="7" height="2" rx="1" fill="currentColor" opacity="0.8"/>
-              <rect x="1" y="11" width="5" height="2" rx="1" fill="currentColor" opacity="0.8" transform="translate(0,-2)"/>
+              <rect x="1" y="9" width="5" height="2" rx="1" fill="currentColor" opacity="0.8"/>
             </svg>
             Timeline
           </button>
         </div>
 
-        {/* Keyboard hint */}
         <span className="text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.6 }}>
           G · T · Tab
         </span>
@@ -1512,7 +1586,6 @@ export default function TimelineView({
             color: showPressure ? '#f59e0b' : 'var(--color-text-muted)',
             border: `1px solid ${showPressure ? '#f59e0b44' : 'var(--color-border)'}`,
           }}
-          title="Toggle pressure map"
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
             <rect x="0" y="8" width="2.5" height="4" rx="1" fill="currentColor" opacity="0.4"/>
@@ -1523,7 +1596,6 @@ export default function TimelineView({
           Load
         </button>
 
-        {/* Inline pressure bar in toolbar */}
         {showPressure && pressureBuckets.length > 0 && (
           <PressureTooltip buckets={pressureBuckets} maxPressure={maxPressure} />
         )}
@@ -1533,9 +1605,8 @@ export default function TimelineView({
         )}
       </div>
 
-      {/* ── Main canvas — view crossfade ── */}
+      {/* ── Main canvas ── */}
       <div className="flex-1 relative overflow-hidden">
-        {/* Graph view */}
         <div
           className="absolute inset-0 flex"
           style={{
@@ -1553,10 +1624,10 @@ export default function TimelineView({
             onSelectTask={setSelectedTaskId}
             onHoverTask={setHoveredTaskId}
             showPressure={showPressure}
+            onEdgeClick={handleEdgeClick}
           />
         </div>
 
-        {/* Gantt view */}
         <div
           className="absolute inset-0 flex"
           style={{
@@ -1579,7 +1650,7 @@ export default function TimelineView({
         </div>
       </div>
 
-      {/* ── Detail Panel — persistent bottom drawer (Ableton Detail View) ── */}
+      {/* ── Detail Panel ── */}
       <DetailPanel
         task={selectedTask}
         tasks={tasks}
@@ -1589,6 +1660,15 @@ export default function TimelineView({
         onDateChange={handleDateChange}
         onNavigateToTask={navigateToTask}
       />
+
+      {/* ── Violation Dialog (Aeon-inspired resolution UI) ── */}
+      {violationDialog && (
+        <ViolationDialog
+          {...violationDialog}
+          onPushForward={handleViolationResolve}
+          onDismiss={() => setViolationDialog(null)}
+        />
+      )}
     </div>
   )
 }

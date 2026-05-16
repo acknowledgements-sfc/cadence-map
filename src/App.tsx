@@ -4,6 +4,8 @@ import AuthPage from './pages/AuthPage'
 import DashboardPage from './pages/DashboardPage'
 import ReleasesPage from './pages/ReleasesPage'
 import ReleaseDetailPage from './pages/ReleaseDetailPage'
+import TasksPage from './pages/TasksPage'
+import SettingsPage from './pages/SettingsPage'
 
 export default function App() {
   return (
@@ -14,6 +16,8 @@ export default function App() {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/releases" element={<ReleasesPage />} />
           <Route path="/releases/:id" element={<ReleaseDetailPage />} />
+          <Route path="/tasks" element={<TasksPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
