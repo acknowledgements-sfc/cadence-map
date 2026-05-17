@@ -24,7 +24,6 @@ import {
   addDays,
   formatDateShort,
   isOverdue,
-  isDueSoon,
   daysBetween,
 } from '../lib/cascadeEngine'
 
@@ -593,7 +592,7 @@ function StreakCard({ streak }: { streak: number }) {
 // ─────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const { user }   = useAuth()
+  const { user: _user } = useAuth()
   const navigate   = useNavigate()
 
   const [windowDays,  setWindowDays]  = useState<WindowSize>(60)
