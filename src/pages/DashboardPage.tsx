@@ -655,7 +655,7 @@ export default function DashboardPage() {
   // Loading skeleton
   if (loading) {
     return (
-      <div className="p-8 max-w-6xl">
+      <div style={{ padding: '24px 28px', width: '100%', boxSizing: 'border-box' }}>
         <div style={{ height: 28, width: 220, background: 'var(--color-surface)', borderRadius: 8, marginBottom: 24 }} />
         <div style={{ height: 200, background: 'var(--color-surface)', borderRadius: 16, marginBottom: 12 }} />
         <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 12 }}>
@@ -667,7 +667,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="p-8 max-w-6xl">
+    <div style={{ padding: '24px 28px', width: '100%', boxSizing: 'border-box' }}>
 
       {/* ── ① Header: window selector + health ring ── */}
       <div
