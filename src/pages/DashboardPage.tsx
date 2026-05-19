@@ -19,6 +19,7 @@ import { supabase } from '../lib/supabase'
 import UpgradeModal, { FREE_LIMIT } from '../components/UpgradeModal'
 import HorizonMap from '../components/HorizonMap'
 import ColumnMap   from '../components/ColumnMap'
+import MotionMap   from '../components/MotionMap'
 import type { HorizonRelease, HorizonTask, HorizonDep } from '../components/HorizonMap'
 import {
   addDays,
@@ -32,7 +33,7 @@ import {
 // ─────────────────────────────────────────────────────────
 
 type WindowSize = 7 | 15 | 30 | 45 | 60 | 90 | 120 | 365
-type ViewMode   = 'horizon' | 'column'
+type ViewMode   = 'horizon' | 'column' | 'motion'
 
 interface GuardianAlert {
   id:        string
@@ -705,7 +706,7 @@ export default function DashboardPage() {
         >
           {/* View toggle */}
           <div style={{ display: 'flex', gap: 2, background: 'var(--color-bg)', borderRadius: 8, padding: 2 }}>
-            {(['horizon', 'column'] as ViewMode[]).map(mode => (
+            {(['horizon', 'column', 'motion'] as ViewMode[]).map(mode => (
               <button
                 key={mode}
                 onClick={() => setViewMode(mode)}
@@ -722,7 +723,7 @@ export default function DashboardPage() {
                   transition:   'all 0.15s',
                 }}
               >
-                {mode === 'horizon' ? '⟶ Horizon' : '▐ Column'}
+                {mode === 'horizon' ? '⟶ Horizon' : mode === 'column' ? '▐ Column' : '◈ Motion'}
               </button>
             ))}
           </div>
@@ -751,8 +752,16 @@ export default function DashboardPage() {
             windowDays={windowDays}
             onReleaseClick={id => navigate(`/releases/${id}`)}
           />
-        ) : (
+        ) : viewMode === 'column' ? (
           <ColumnMap
+            releases={releases}
+            tasks={tasks}
+            deps={deps}
+            windowDays={windowDays}
+            onReleaseClick={id => navigate(`/releases/${id}`)}
+          />
+        ) : (
+          <MotionMap
             releases={releases}
             tasks={tasks}
             deps={deps}
