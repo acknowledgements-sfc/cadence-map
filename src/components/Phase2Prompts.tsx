@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 
-interface Phase2Answers {
+export interface Phase2Answers {
   weeklyHours?: number
   hasCollaborators?: boolean
   isPitching?: boolean
@@ -106,7 +106,7 @@ export default function Phase2Prompts({ onAnswer, answers }: Phase2PromptsProps)
       >
         {/* Progress dots */}
         <div className="flex items-center gap-1.5 mb-3">
-          {PROMPTS.map((p, i) => {
+          {PROMPTS.map((p, _i) => {
             const answered = answers[p.id] !== undefined
             const isCurrent = p.id === prompt.id
             return (

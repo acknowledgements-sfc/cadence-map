@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from 'react'
 import { cascadeFromTask } from '../lib/cascadeEngine'
 import type { CascadeTask, CascadeDependency } from '../lib/cascadeEngine'
-import { formatDate, addDays } from '../lib/cascadeEngine'
+import { formatDate } from '../lib/cascadeEngine'
 
 // ── Types ──────────────────────────────────────────────────────
 

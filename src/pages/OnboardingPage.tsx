@@ -20,7 +20,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { buildReleaseTaskPayload, TEMPLATES, type ReleaseType } from '../lib/releaseTemplates'
 import DraggableTimeline, { type DraggableTask } from '../components/DraggableTimeline'
-import Phase2Prompts from '../components/Phase2Prompts'
+import Phase2Prompts, { type Phase2Answers } from '../components/Phase2Prompts'
 import StalledProjectModal from '../components/StalledProjectModal'
 
 // ============================================================
@@ -64,10 +64,6 @@ function formatDate(isoDate: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function formatDateShort(isoDate: string): string {
-  const d = new Date(isoDate + 'T12:00:00Z')
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
 
 function generatePreviewTasks(releaseType: ReleaseType, releaseDate: string, doneKeys: string[]): DraggableTask[] {
   const template = TEMPLATES[releaseType] || TEMPLATES.Single
@@ -110,14 +106,14 @@ export default function OnboardingPage() {
   const [doneTasks, setDoneTasks] = useState<string[]>([])
   const [tasks, setTasks] = useState<DraggableTask[]>([])
   const [showAIWarning, setShowAIWarning] = useState(false)
-  const [phase2Answers, setPhase2Answers] = useState<Record<string, unknown>>({})
+  const [phase2Answers, setPhase2Answers] = useState<Phase2Answers>({})
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isMobile, setIsMobile] = useState(false)
 
   // AI personality - could be user preference in future
-  const [aiPersonality] = useState<keyof typeof AI_PERSONALITIES>('invisible')
+  const [_aiPersonality] = useState<keyof typeof AI_PERSONALITIES>('invisible')
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth <= 768)
@@ -170,7 +166,7 @@ export default function OnboardingPage() {
       }
 
       // 2. Generate tasks
-      const { tasks: taskPayload, keyOrder } = buildReleaseTaskPayload(
+      const { tasks: taskPayload } = buildReleaseTaskPayload(
         releaseType,
         releaseDate,
         release.id,
