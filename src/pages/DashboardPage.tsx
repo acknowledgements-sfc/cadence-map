@@ -16,9 +16,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { supabase } from '../lib/supabase'
-import NewReleaseModal from '../components/NewReleaseModal'
 import UpgradeModal, { FREE_LIMIT } from '../components/UpgradeModal'
 import HorizonMap from '../components/HorizonMap'
+import ColumnMap   from '../components/ColumnMap'
 import type { HorizonRelease, HorizonTask, HorizonDep } from '../components/HorizonMap'
 import {
   addDays,
@@ -32,6 +32,7 @@ import {
 // ─────────────────────────────────────────────────────────
 
 type WindowSize = 7 | 15 | 30 | 45 | 60 | 90 | 120 | 365
+type ViewMode   = 'horizon' | 'column'
 
 interface GuardianAlert {
   id:        string
@@ -596,11 +597,11 @@ export default function DashboardPage() {
   const navigate   = useNavigate()
 
   const [windowDays,  setWindowDays]  = useState<WindowSize>(60)
+  const [viewMode,    setViewMode]    = useState<ViewMode>('horizon')
   const [releases,    setReleases]    = useState<HorizonRelease[]>([])
   const [tasks,       setTasks]       = useState<HorizonTask[]>([])
   const [deps,        setDeps]        = useState<HorizonDep[]>([])
   const [loading,     setLoading]     = useState(true)
-  const [showModal,   setShowModal]   = useState(false)
   const [showUpgrade, setShowUpgrade] = useState(false)
 
   // Fetch all data in one round trip
@@ -645,8 +646,8 @@ export default function DashboardPage() {
 
   const handleNewRelease = useCallback(() => {
     if (releases.length >= FREE_LIMIT) setShowUpgrade(true)
-    else setShowModal(true)
-  }, [releases.length])
+    else navigate('/releases/new')
+  }, [releases.length, navigate])
 
   const handleAlertClick = useCallback((releaseId?: string) => {
     if (releaseId) navigate(`/releases/${releaseId}`)
@@ -702,9 +703,30 @@ export default function DashboardPage() {
             marginBottom:   12,
           }}
         >
-          <p style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>
-            Horizon — all releases
-          </p>
+          {/* View toggle */}
+          <div style={{ display: 'flex', gap: 2, background: 'var(--color-bg)', borderRadius: 8, padding: 2 }}>
+            {(['horizon', 'column'] as ViewMode[]).map(mode => (
+              <button
+                key={mode}
+                onClick={() => setViewMode(mode)}
+                style={{
+                  fontSize:     10,
+                  fontWeight:   600,
+                  padding:      '3px 10px',
+                  borderRadius: 6,
+                  border:       'none',
+                  cursor:       'pointer',
+                  background:   viewMode === mode ? 'var(--color-surface-raised, var(--color-surface))' : 'transparent',
+                  color:        viewMode === mode ? 'var(--color-text)' : 'var(--color-text-muted)',
+                  boxShadow:    viewMode === mode ? '0 1px 3px rgba(0,0,0,0.15)' : 'none',
+                  transition:   'all 0.15s',
+                }}
+              >
+                {mode === 'horizon' ? '⟶ Horizon' : '▐ Column'}
+              </button>
+            ))}
+          </div>
+
           <button
             onClick={handleNewRelease}
             style={{
@@ -721,13 +743,23 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        <HorizonMap
-          releases={releases}
-          tasks={tasks}
-          deps={deps}
-          windowDays={windowDays}
-          onReleaseClick={id => navigate(`/releases/${id}`)}
-        />
+        {viewMode === 'horizon' ? (
+          <HorizonMap
+            releases={releases}
+            tasks={tasks}
+            deps={deps}
+            windowDays={windowDays}
+            onReleaseClick={id => navigate(`/releases/${id}`)}
+          />
+        ) : (
+          <ColumnMap
+            releases={releases}
+            tasks={tasks}
+            deps={deps}
+            windowDays={windowDays}
+            onReleaseClick={id => navigate(`/releases/${id}`)}
+          />
+        )}
 
         {/* Legend */}
         {releases.length > 0 && (
@@ -790,12 +822,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {showModal && (
-        <NewReleaseModal
-          onClose={() => setShowModal(false)}
-          onCreated={id => navigate(`/releases/${id}`)}
-        />
-      )}
       {showUpgrade && (
         <UpgradeModal onClose={() => setShowUpgrade(false)} reason="release_limit" />
       )}
