@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import NewReleaseModal from '../components/NewReleaseModal'
 import UpgradeModal, { FREE_LIMIT } from '../components/UpgradeModal'
 import { formatDate, isOverdue } from '../lib/cascadeEngine'
 
@@ -18,7 +17,6 @@ export default function ReleasesPage() {
   const navigate = useNavigate()
   const [releases, setReleases] = useState<Release[]>([])
   const [loading, setLoading] = useState(true)
-  const [showModal, setShowModal] = useState(false)
   const [showUpgrade, setShowUpgrade] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [taskStats, setTaskStats] = useState<Record<string, { total: number; complete: number; overdue: number }>>({})
@@ -79,7 +77,7 @@ export default function ReleasesPage() {
     if (releases.length >= FREE_LIMIT) {
       setShowUpgrade(true)
     } else {
-      setShowModal(true)
+      navigate('/releases/new')
     }
   }
 
@@ -236,15 +234,6 @@ export default function ReleasesPage() {
             )
           })}
         </div>
-      )}
-
-      {showModal && (
-        <NewReleaseModal
-          onClose={() => setShowModal(false)}
-          onCreated={(releaseId) => {
-            navigate(`/releases/${releaseId}`)
-          }}
-        />
       )}
 
       {showUpgrade && (

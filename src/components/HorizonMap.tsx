@@ -1,19 +1,26 @@
 // ============================================================
-// CADENCE — HorizonMap
+// CADENCE — HorizonMap (Overdrive Edition)
 //
 // Subway-style multi-release timeline (birds-eye view).
 // Each release gets its own horizontal track. A pulsing NOW
-// line anchors the left edge. Task dots are colored by status:
+// line anchors the current date. Task dots are colored by status:
 //   grey filled  = complete
 //   hollow ring  = pending
 //   amber filled = in_progress
 //   red filled   = overdue OR violated dependency
 //
+// Overdrive features:
+//   • Pan/zoom via scroll + drag (pointer events, passive: false wheel)
+//   • Live cursor line + date tooltip tracking the mouse
+//   • CSS @property animated conflict glow on violated tasks
+//   • Spring-reflow of task dots and bars on resize (motion/react)
+//
 // The time window (7d → 1yr) is controlled by the parent.
 // Clicking a track navigates to that release's detail page.
 // ============================================================
 
-import { useRef, useEffect, useState, useMemo } from 'react'
+import { useRef, useEffect, useState, useMemo, useCallback } from 'react'
+import { motion } from 'motion/react'
 import { addDays, isOverdue, isDueSoon } from '../lib/cascadeEngine'
 
 // ─────────────────────────────────────────────────────────
@@ -68,6 +75,9 @@ const TRACK_H   = 50
 const TRACK_GAP = 10
 const TOP_PAD   = 26 // room for month labels above first track
 
+const SPRING_DOT  = { type: 'spring' as const, stiffness: 220, damping: 28 }
+const SPRING_LINE = { type: 'spring' as const, stiffness: 180, damping: 26 }
+
 function truncate(s: string, max = 17): string {
   return s.length > max ? s.slice(0, max - 1) + '…' : s
 }
@@ -84,9 +94,29 @@ export default function HorizonMap({
   onReleaseClick,
 }: HorizonMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const svgRef       = useRef<SVGSVGElement>(null)
   const [svgWidth, setSvgWidth] = useState(600)
 
-  // Respond to container resize
+  // ── Pan / zoom state ────────────────────────────────────
+  const [panOffsetMs, setPanOffsetMs] = useState(0)
+  const [zoomScale,   setZoomScale]   = useState(1)
+
+  // ── Interaction state ───────────────────────────────────
+  const [cursorX,    setCursorX]    = useState<number | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
+  const dragRef      = useRef<{ startX: number; startPan: number } | null>(null)
+  const hasDraggedRef = useRef(false)
+
+  // ── Reduced motion ──────────────────────────────────────
+  const prefersReducedMotion = useMemo(
+    () => typeof window !== 'undefined'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    []
+  )
+  const dotTransition  = prefersReducedMotion ? { duration: 0 } : SPRING_DOT
+  const lineTransition = prefersReducedMotion ? { duration: 0 } : SPRING_LINE
+
+  // ── Respond to container resize ─────────────────────────
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -98,31 +128,41 @@ export default function HorizonMap({
     return () => ro.disconnect()
   }, [])
 
-  // ── Date math ──────────────────────────────────────────
-  const todayStr  = new Date().toISOString().split('T')[0]
-  const todayMs   = new Date(todayStr + 'T12:00:00Z').getTime()
-  const endMs     = todayMs + windowDays * 86_400_000
-  const chartW    = Math.max(0, svgWidth - LABEL_W - RIGHT_PAD)
+  // ── Reset pan/zoom when parent window changes ───────────
+  useEffect(() => {
+    setPanOffsetMs(0)
+    setZoomScale(1)
+  }, [windowDays])
+
+  // ── Date math ───────────────────────────────────────────
+  const todayStr = new Date().toISOString().split('T')[0]
+  const todayMs  = new Date(todayStr + 'T12:00:00Z').getTime()
+
+  const effectiveWindowMs = (windowDays * 86_400_000) / zoomScale
+  const effectiveStartMs  = todayMs + panOffsetMs
+  const effectiveEndMs    = effectiveStartMs + effectiveWindowMs
+
+  const chartW = Math.max(0, svgWidth - LABEL_W - RIGHT_PAD)
 
   const toX = (isoDate: string): number => {
     const ms  = new Date(isoDate + 'T12:00:00Z').getTime()
-    const pct = (ms - todayMs) / (endMs - todayMs)
+    const pct = (ms - effectiveStartMs) / (effectiveEndMs - effectiveStartMs)
     return LABEL_W + pct * chartW
   }
 
   // ── Month gridlines ─────────────────────────────────────
   const monthLines = useMemo(() => {
     const lines: Date[] = []
-    const start = new Date(todayMs)
+    const start = new Date(effectiveStartMs)
     let m = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1))
-    while (m.getTime() <= endMs) {
+    while (m.getTime() <= effectiveEndMs) {
       lines.push(new Date(m))
       m = new Date(Date.UTC(m.getUTCFullYear(), m.getUTCMonth() + 1, 1))
     }
     return lines
-  }, [windowDays, todayMs]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [effectiveStartMs, effectiveEndMs])
 
-  // ── Violated task IDs ───────────────────────────────────
+  // ── Violated task IDs ────────────────────────────────────
   const violatedIds = useMemo(() => {
     const taskMap = new Map(tasks.map(t => [t.id, t]))
     const violated = new Set<string>()
@@ -137,7 +177,7 @@ export default function HorizonMap({
     return violated
   }, [tasks, deps])
 
-  // ── Tasks indexed by release ────────────────────────────
+  // ── Tasks indexed by release ─────────────────────────────
   const tasksByRelease = useMemo(() => {
     const map = new Map<string, HorizonTask[]>()
     for (const t of tasks) {
@@ -147,10 +187,91 @@ export default function HorizonMap({
     return map
   }, [tasks])
 
-  const nowX   = LABEL_W // today always anchors the left edge
-  const totalH = TOP_PAD + releases.length * (TRACK_H + TRACK_GAP) - TRACK_GAP + 10
+  // ── Derived geometry ─────────────────────────────────────
+  const nowX        = toX(todayStr)
+  const showNowLine = nowX >= LABEL_W && nowX <= svgWidth - RIGHT_PAD
+  const totalH      = TOP_PAD + releases.length * (TRACK_H + TRACK_GAP) - TRACK_GAP + 10
 
-  // ── Empty state ─────────────────────────────────────────
+  // ── Cursor date label ────────────────────────────────────
+  const cursorDate = cursorX !== null ? (() => {
+    const pct = (cursorX - LABEL_W) / chartW
+    const ms  = effectiveStartMs + pct * (effectiveEndMs - effectiveStartMs)
+    return new Date(ms).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', timeZone: 'UTC',
+    })
+  })() : null
+
+  // ── Mouse hover handlers ─────────────────────────────────
+  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (isDragging) return
+    const rect = svgRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const x = e.clientX - rect.left
+    setCursorX(x >= LABEL_W && x <= svgWidth - RIGHT_PAD ? x : null)
+  }
+
+  const handleMouseLeave = () => setCursorX(null)
+
+  // ── Pointer drag handlers ────────────────────────────────
+  const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.button !== 0) return
+    const rect = svgRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const x = e.clientX - rect.left
+    if (x < LABEL_W) return
+    svgRef.current?.setPointerCapture(e.pointerId)
+    dragRef.current = { startX: e.clientX, startPan: panOffsetMs }
+    hasDraggedRef.current = false
+    setIsDragging(true)
+    setCursorX(null)
+  }
+
+  const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!dragRef.current || chartW === 0) return
+    const deltaX = e.clientX - dragRef.current.startX
+    if (Math.abs(deltaX) > 3) hasDraggedRef.current = true
+    const msDelta = -(deltaX / chartW) * effectiveWindowMs
+    setPanOffsetMs(dragRef.current.startPan + msDelta)
+  }
+
+  const handlePointerUp = () => {
+    dragRef.current = null
+    setIsDragging(false)
+  }
+
+  // ── Wheel zoom (non-passive, zoom toward cursor) ─────────
+  const handleWheel = useCallback((e: WheelEvent) => {
+    e.preventDefault()
+    const rect = svgRef.current?.getBoundingClientRect()
+    if (!rect || chartW === 0) return
+    const x = e.clientX - rect.left
+    if (x < LABEL_W || x > svgWidth - RIGHT_PAD) return
+
+    // Normalise across deltaMode
+    const delta = e.deltaY * (e.deltaMode === 1 ? 20 : e.deltaMode === 2 ? 400 : 1)
+    const newZoom = Math.max(0.3, Math.min(10, zoomScale * (1 - delta * 0.0012)))
+
+    // Preserve the date under the cursor
+    const cursorPct  = (x - LABEL_W) / chartW
+    const cursorMs   = effectiveStartMs + cursorPct * effectiveWindowMs
+    const newWinMs   = (windowDays * 86_400_000) / newZoom
+    const newStartMs = cursorMs - cursorPct * newWinMs
+
+    setZoomScale(newZoom)
+    setPanOffsetMs(newStartMs - todayMs)
+  }, [
+    zoomScale, effectiveStartMs, effectiveWindowMs,
+    chartW, svgWidth, windowDays, todayMs,
+  ])
+
+  useEffect(() => {
+    const el = svgRef.current
+    if (!el) return
+    el.addEventListener('wheel', handleWheel, { passive: false })
+    return () => el.removeEventListener('wheel', handleWheel)
+  }, [handleWheel])
+
+  // ── Empty state ──────────────────────────────────────────
   if (releases.length === 0) {
     return (
       <div ref={containerRef} style={{ padding: '24px 0', textAlign: 'center' }}>
@@ -163,31 +284,56 @@ export default function HorizonMap({
 
   return (
     <div ref={containerRef} style={{ width: '100%' }}>
-      {/* CSS animations — defined here so they're available globally while Dashboard is mounted */}
+      {/* ── Styles ── */}
       <style>{`
+        /* cadence-now-pulse is unique to HorizonMap — cadence-live-pulse and
+           cadence-alert-in have been moved to index.css */
         @keyframes cadence-now-pulse {
           0%, 100% { opacity: 1; }
           50%       { opacity: 0.3; }
         }
         .cadence-now { animation: cadence-now-pulse 2.5s ease-in-out infinite; }
 
-        @keyframes cadence-live-pulse {
-          0%, 100% { opacity: 0.9; }
-          50%       { opacity: 0.15; }
+        /* CSS @property lets the browser interpolate --glow-r as a length,
+           enabling the smooth outward-ripple on violated task dots */
+        @property --glow-r {
+          syntax: '<length>';
+          initial-value: 5px;
+          inherits: false;
         }
-        .cadence-live { animation: cadence-live-pulse 2.2s ease-in-out infinite; }
+        @keyframes cadence-conflict-glow {
+          0%, 100% { --glow-r: 5px;  opacity: 0.65; }
+          50%       { --glow-r: 13px; opacity: 0;    }
+        }
+        .cadence-conflict-ring {
+          animation: cadence-conflict-glow 2.2s ease-in-out infinite;
+          r: var(--glow-r);
+        }
 
-        @keyframes cadence-alert-in {
-          from { opacity: 0; transform: translateX(-8px); }
-          to   { opacity: 1; transform: translateX(0); }
+        .horizon-chart          { cursor: grab; }
+        .horizon-chart.dragging { cursor: grabbing; }
+
+        @media (prefers-reduced-motion: reduce) {
+          .cadence-now            { animation: none; opacity: 0.6; }
+          .cadence-conflict-ring  { animation: none; r: 8px; opacity: 0.3; }
         }
       `}</style>
 
       <svg
+        ref={svgRef}
         width={svgWidth}
         height={totalH}
         viewBox={`0 0 ${svgWidth} ${totalH}`}
-        style={{ display: 'block', overflow: 'visible' }}
+        className={`horizon-chart${isDragging ? ' dragging' : ''}`}
+        style={{ display: 'block', overflow: 'visible', userSelect: 'none' }}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        role="img"
+        aria-label="Release timeline"
       >
         {/* ── Month gridlines ── */}
         {monthLines.map((m, i) => {
@@ -222,10 +368,10 @@ export default function HorizonMap({
           const relTasks = tasksByRelease.get(rel.id) ?? []
           const relX     = rel.release_date ? toX(rel.release_date) : null
 
-          const hasViolation   = relTasks.some(t => violatedIds.has(t.id))
-          const diamondColor   = hasViolation ? '#E24B4A' : color
+          const hasViolation = relTasks.some(t => violatedIds.has(t.id))
+          const diamondColor = hasViolation ? '#E24B4A' : color
 
-          // Completed progress bar (solid colored segment along track)
+          // Completed progress bar
           const doneDates = relTasks
             .filter(t => t.status === 'complete' && t.due_date)
             .map(t => t.due_date!)
@@ -240,8 +386,11 @@ export default function HorizonMap({
           return (
             <g
               key={rel.id}
-              style={{ cursor: 'pointer' }}
-              onClick={() => onReleaseClick(rel.id)}
+              style={{ cursor: isDragging ? 'grabbing' : 'pointer' }}
+              onClick={() => {
+                if (hasDraggedRef.current) return
+                onReleaseClick(rel.id)
+              }}
             >
               {/* Release label */}
               <text
@@ -270,14 +419,15 @@ export default function HorizonMap({
                 strokeWidth={0.75}
               />
 
-              {/* Completed segment */}
+              {/* Completed segment — spring-reflows on resize */}
               {completedBar && completedBar.x2 > completedBar.x1 && (
-                <line
-                  x1={completedBar.x1} y1={midY}
-                  x2={completedBar.x2} y2={midY}
+                <motion.line
+                  y1={midY} y2={midY}
                   stroke={color}
                   strokeWidth={2.5}
                   opacity={0.3}
+                  animate={{ x1: completedBar.x1, x2: completedBar.x2 }}
+                  transition={lineTransition}
                 />
               )}
 
@@ -285,7 +435,8 @@ export default function HorizonMap({
               {relTasks.map(task => {
                 if (!task.due_date) return null
                 const x = toX(task.due_date)
-                if (x < LABEL_W - 8 || x > svgWidth + 8) return null
+                // Cull well outside visible range (still render ±32px for spring overshoot)
+                if (x < LABEL_W - 32 || x > svgWidth + 32) return null
 
                 const isViolated = violatedIds.has(task.id)
                 const isDone     = task.status === 'complete'
@@ -311,13 +462,31 @@ export default function HorizonMap({
 
                 return (
                   <g key={task.id}>
-                    <circle
-                      cx={x} cy={midY}
+                    {/* Conflict glow ring — CSS @property animates r outward */}
+                    {isViolated && !isDone && (
+                      <circle
+                        className="cadence-conflict-ring"
+                        cx={x}
+                        cy={midY}
+                        r={5}
+                        fill="none"
+                        stroke="#E24B4A"
+                        strokeWidth={1.5}
+                      />
+                    )}
+
+                    {/* Task dot — springs to new x on resize */}
+                    <motion.circle
+                      cy={midY}
                       r={4}
                       fill={fill}
                       stroke={stroke}
                       strokeWidth={1.5}
+                      animate={{ cx: x }}
+                      transition={dotTransition}
                     />
+
+                    {/* Alert indicator */}
                     {(isUrgent || isOD || isViolated) && !isDone && (
                       <text
                         x={x} y={midY - 8}
@@ -326,6 +495,7 @@ export default function HorizonMap({
                         fontWeight={600}
                         fill="#E24B4A"
                         fontFamily="inherit"
+                        style={{ pointerEvents: 'none' }}
                       >
                         !
                       </text>
@@ -361,23 +531,56 @@ export default function HorizonMap({
           )
         })}
 
-        {/* ── TODAY line — always at left anchor ── */}
-        <g className="cadence-now">
-          <line
-            x1={nowX} y1={0}
-            x2={nowX} y2={totalH}
-            stroke="#888780"
-            strokeWidth={1.5}
-          />
-          <text
-            x={nowX + 3} y={TOP_PAD - 10}
-            fontSize={9}
-            fill="#888780"
-            fontFamily="inherit"
-          >
-            today
-          </text>
-        </g>
+        {/* ── TODAY line ── */}
+        {showNowLine && (
+          <g className="cadence-now">
+            <line
+              x1={nowX} y1={0}
+              x2={nowX} y2={totalH}
+              stroke="#888780"
+              strokeWidth={1.5}
+            />
+            <text
+              x={nowX + 3} y={TOP_PAD - 10}
+              fontSize={9}
+              fill="#888780"
+              fontFamily="inherit"
+            >
+              today
+            </text>
+          </g>
+        )}
+
+        {/* ── Cursor tracker ── */}
+        {cursorX !== null && !isDragging && (
+          <g style={{ pointerEvents: 'none' }}>
+            <line
+              x1={cursorX} y1={TOP_PAD - 4}
+              x2={cursorX} y2={totalH}
+              stroke="var(--color-text-muted)"
+              strokeWidth={0.5}
+              strokeDasharray="2 3"
+              opacity={0.45}
+            />
+            {/* Date pill */}
+            <rect
+              x={cursorX - 25} y={1}
+              width={50} height={13}
+              rx={3}
+              fill="var(--color-surface-2)"
+              opacity={0.92}
+            />
+            <text
+              x={cursorX} y={10.5}
+              textAnchor="middle"
+              fontSize={8}
+              fill="var(--color-text-muted)"
+              fontFamily="inherit"
+            >
+              {cursorDate}
+            </text>
+          </g>
+        )}
       </svg>
     </div>
   )

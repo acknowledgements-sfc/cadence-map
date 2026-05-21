@@ -114,7 +114,7 @@ function computeGuardianAlerts(
     alerts.push({
       id:        `violation-${dep.task_id}`,
       severity:  'critical',
-      color:     '#E24B4A',
+      color:     'var(--color-critical)',
       message:   `"${to.title}" is scheduled before "${from.title}" finishes on ${formatDateShort(from.due_date)}. That's a dependency violation — it cannot start on time.`,
       sub:       `${rel?.title ?? 'Unknown release'} · conflict`,
       releaseId: to.release_id,
@@ -133,7 +133,7 @@ function computeGuardianAlerts(
     alerts.push({
       id:        `overdue-${rid}`,
       severity:  'critical',
-      color:     '#E24B4A',
+      color:     'var(--color-critical)',
       message:   `${count} task${count > 1 ? 's' : ''} on "${rel?.title ?? 'this release'}" ${count > 1 ? 'are' : 'is'} overdue and unresolved. Every day you wait risks pushing your release date.`,
       sub:       `${rel?.title ?? ''} · ${count} overdue`,
       releaseId: rid,
@@ -150,7 +150,7 @@ function computeGuardianAlerts(
     alerts.push({
       id:        `urgent-${t.id}`,
       severity:  'warning',
-      color:     '#BA7517',
+      color:     'var(--color-caution)',
       message:   `"${t.title}" is due in ${dLeft} day${dLeft !== 1 ? 's' : ''} and hasn't started. If you miss this, ${rel?.title ?? 'your release'} starts cascading.`,
       sub:       `${rel?.title ?? ''} · due ${formatDateShort(t.due_date)}`,
       releaseId: t.release_id,
@@ -168,7 +168,7 @@ function computeGuardianAlerts(
     alerts.push({
       id:        `active-risk-${t.id}`,
       severity:  'warning',
-      color:     '#BA7517',
+      color:     'var(--color-caution)',
       message:   `"${t.title}" is in progress and due ${formatDateShort(t.due_date!)}. Make sure it lands on time — ${activeAtRisk.length > 1 ? `${activeAtRisk.length - 1} other task${activeAtRisk.length > 2 ? 's are' : ' is'} in the same window` : 'this is your only active task this week'}.`,
       sub:       `${rel?.title ?? ''} · in progress`,
       releaseId: t.release_id,
@@ -181,7 +181,7 @@ function computeGuardianAlerts(
     alerts.push({
       id:       'momentum',
       severity: 'success',
-      color:    '#3B6D11',
+      color:    'var(--color-success)',
       message:  `${completedCount} task${completedCount > 1 ? 's' : ''} completed across your active releases. No critical issues right now — keep the momentum going.`,
       sub:      'looking good',
     })
@@ -253,9 +253,9 @@ function computeStreak(releases: HorizonRelease[], tasks: HorizonTask[]): number
 }
 
 function healthColor(score: number): string {
-  if (score >= 80) return '#1D9E75'
-  if (score >= 50) return '#BA7517'
-  return '#E24B4A'
+  if (score >= 80) return 'var(--color-success)'
+  if (score >= 50) return 'var(--color-caution)'
+  return 'var(--color-critical)'
 }
 
 // ─────────────────────────────────────────────────────────
@@ -265,9 +265,16 @@ function healthColor(score: number): string {
 function PlanHealthRing({ score }: { score: number }) {
   const [displayed, setDisplayed] = useState(0)
   const rafRef = useRef<number>(0)
+  const prefersReducedMotion =
+    typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
   useEffect(() => {
     if (score === 0) return
+    if (prefersReducedMotion) {
+      setDisplayed(score)
+      return
+    }
     let current = 0
     const target    = score
     const increment = Math.max(1, Math.ceil(target / 50))
@@ -281,7 +288,7 @@ function PlanHealthRing({ score }: { score: number }) {
       clearTimeout(t)
       cancelAnimationFrame(rafRef.current)
     }
-  }, [score])
+  }, [score, prefersReducedMotion])
 
   const R    = 18
   const circ = 2 * Math.PI * R
@@ -350,7 +357,7 @@ function WindowSelector({
             fontSize:     12,
             padding:      '4px 10px',
             borderRadius: 'var(--border-radius-md)',
-            border:       `0.5px solid ${w.days === value ? 'var(--color-accent)' : 'var(--color-border)'}`,
+            border:       `1px solid ${w.days === value ? 'var(--color-accent)' : 'var(--color-border)'}`,
             background:   w.days === value ? 'var(--color-surface-2)' : 'transparent',
             color:        w.days === value ? 'var(--color-text)' : 'var(--color-text-muted)',
             cursor:       'pointer',
@@ -404,7 +411,7 @@ function GuardianPanel({
         </span>
         <span
           className="cadence-live"
-          style={{ fontSize: 10, color: '#1D9E75', marginLeft: 'auto' }}
+          style={{ fontSize: 10, color: 'var(--color-success)', marginLeft: 'auto' }}
         >
           ● watching {releaseCount} plan{releaseCount !== 1 ? 's' : ''}
         </span>
@@ -420,7 +427,15 @@ function GuardianPanel({
           {alerts.map((alert, idx) => (
             <div
               key={alert.id}
+              role={alert.releaseId ? 'button' : undefined}
+              tabIndex={alert.releaseId ? 0 : undefined}
               onClick={() => onAlertClick(alert.releaseId)}
+              onKeyDown={e => {
+                if (alert.releaseId && (e.key === 'Enter' || e.key === ' ')) {
+                  e.preventDefault()
+                  onAlertClick(alert.releaseId)
+                }
+              }}
               style={{
                 display:       'flex',
                 alignItems:    'flex-start',
@@ -431,7 +446,11 @@ function GuardianPanel({
                   : 'none',
                 cursor:        alert.releaseId ? 'pointer' : 'default',
                 animation:     `cadence-alert-in 0.3s ease-out ${idx * 60}ms both`,
+                outline:       'none',
+                borderRadius:  'var(--border-radius-sm)',
               }}
+              onFocus={e => { if (alert.releaseId) e.currentTarget.style.boxShadow = '0 0 0 2px var(--color-accent)' }}
+              onBlur={e => { e.currentTarget.style.boxShadow = 'none' }}
             >
               <div
                 style={{
@@ -480,9 +499,9 @@ function TodayFocusCard({
 
   const dueColor = focus
     ? focus.isOverdue || focus.daysUntil === 0
-      ? '#E24B4A'
+      ? 'var(--color-critical)'
       : focus.daysUntil <= 3
-        ? '#BA7517'
+        ? 'var(--color-caution)'
         : 'var(--color-text-muted)'
     : 'var(--color-text-muted)'
 
@@ -499,8 +518,11 @@ function TodayFocusCard({
         padding:      '16px 18px',
         flex:          1,
         cursor:        focus ? 'pointer' : 'default',
+        transition:   'background 0.15s',
       }}
       onClick={() => focus && onNavigate(focus.release.id)}
+      onMouseEnter={e => { if (focus) e.currentTarget.style.background = 'var(--color-surface-2)' }}
+      onMouseLeave={e => { e.currentTarget.style.background = 'var(--color-surface)' }}
     >
       <p style={{ fontSize: 10, color: 'var(--color-text-muted)', marginBottom: 8 }}>
         Today's focus
@@ -527,7 +549,7 @@ function TodayFocusCard({
               style={{
                 width:        progressWidth,
                 height:       '100%',
-                background:   '#1D9E75',
+                background:   'var(--color-success)',
                 borderRadius: 2,
                 transition:   'width 0.5s ease',
               }}
@@ -562,7 +584,7 @@ function StreakCard({ streak }: { streak: number }) {
       ? 'First one down. Ship the next one on time to start a streak.'
       : `${streak} releases shipped on time — don't break it now.`
 
-  const col = streak >= 3 ? '#1D9E75' : streak >= 1 ? '#BA7517' : 'var(--color-text-muted)'
+  const col = streak >= 3 ? 'var(--color-success)' : streak >= 1 ? 'var(--color-caution)' : 'var(--color-text-muted)'
 
   return (
     <div
@@ -658,11 +680,12 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div style={{ padding: '24px 28px', width: '100%', boxSizing: 'border-box' }}>
-        <div style={{ height: 28, width: 220, background: 'var(--color-surface)', borderRadius: 8, marginBottom: 24 }} />
-        <div style={{ height: 200, background: 'var(--color-surface)', borderRadius: 16, marginBottom: 12 }} />
+        <h1 className="sr-only">Dashboard</h1>
+        <div style={{ height: 28, width: 220, background: 'var(--color-surface)', borderRadius: 'var(--border-radius-sm)', marginBottom: 24 }} />
+        <div style={{ height: 200, background: 'var(--color-surface)', borderRadius: 'var(--border-radius-xl)', marginBottom: 12 }} />
         <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 12 }}>
-          <div style={{ height: 200, background: 'var(--color-surface)', borderRadius: 16 }} />
-          <div style={{ height: 200, background: 'var(--color-surface)', borderRadius: 16 }} />
+          <div style={{ height: 200, background: 'var(--color-surface)', borderRadius: 'var(--border-radius-xl)' }} />
+          <div style={{ height: 200, background: 'var(--color-surface)', borderRadius: 'var(--border-radius-xl)' }} />
         </div>
       </div>
     )
@@ -670,6 +693,7 @@ export default function DashboardPage() {
 
   return (
     <div style={{ padding: '24px 28px', width: '100%', boxSizing: 'border-box' }}>
+      <h1 className="sr-only">Dashboard</h1>
 
       {/* ── ① Header: window selector + health ring ── */}
       <div
@@ -717,9 +741,8 @@ export default function DashboardPage() {
                   borderRadius: 6,
                   border:       'none',
                   cursor:       'pointer',
-                  background:   viewMode === mode ? 'var(--color-surface-raised, var(--color-surface))' : 'transparent',
+                  background:   viewMode === mode ? 'var(--color-surface-2)' : 'transparent',
                   color:        viewMode === mode ? 'var(--color-text)' : 'var(--color-text-muted)',
-                  boxShadow:    viewMode === mode ? '0 1px 3px rgba(0,0,0,0.15)' : 'none',
                   transition:   'all 0.15s',
                 }}
               >
@@ -731,14 +754,21 @@ export default function DashboardPage() {
           <button
             onClick={handleNewRelease}
             style={{
-              fontSize:     11,
-              fontWeight:   600,
-              color:        'var(--color-accent)',
-              background:   'transparent',
-              border:       'none',
-              cursor:       'pointer',
-              padding:      '2px 0',
+              fontSize:        11,
+              fontWeight:      600,
+              color:           'var(--color-accent)',
+              background:      'transparent',
+              border:          'none',
+              cursor:          'pointer',
+              padding:         '10px 12px',
+              borderRadius:    'var(--border-radius-sm)',
+              minHeight:       44,
+              display:         'flex',
+              alignItems:      'center',
+              transition:      'opacity 0.15s',
             }}
+            onMouseEnter={e => (e.currentTarget.style.opacity = '0.75')}
+            onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
           >
             + New release
           </button>

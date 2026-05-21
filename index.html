@@ -1,13 +1,724 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>cadence</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cadence — Your music release, finally under control</title>
+  <meta name="description" content="The intelligent timeline for independent artists. Plan your release backward from launch day, and watch your whole plan adjust when things change.">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg: #0a0a0d;
+      --surface: #16161d;
+      --surface-2: #1f1f29;
+      --border: #2a2a35;
+      --text: #f0eeff;
+      --text-muted: #8884aa;
+      --accent: #7c6cfc;
+      --accent-hover: #6a5ce0;
+      --gradient-1: linear-gradient(135deg, #7c6cfc 0%, #9d8fff 100%);
+      --gradient-2: linear-gradient(135deg, #6a5ce0 0%, #8777ef 100%);
+      --success: #10b981;
+      --error: #f87171;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ── Header ── */
+    header {
+      padding: 20px 0;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: rgba(10, 10, 13, 0.95);
+      backdrop-filter: blur(12px);
+      z-index: 100;
+    }
+
+    .header-content {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      background: var(--gradient-1);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .cta-nav {
+      padding: 10px 20px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
+      transition: all 0.2s;
+    }
+
+    .cta-nav:hover {
+      background: var(--accent-hover);
+      transform: translateY(-1px);
+    }
+
+    /* ── Hero ── */
+    .hero {
+      padding: 120px 0 80px;
+      text-align: center;
+    }
+
+    .hero h1 {
+      font-size: clamp(36px, 5vw, 64px);
+      font-weight: 800;
+      line-height: 1.1;
+      margin-bottom: 24px;
+      background: linear-gradient(135deg, #ffffff 0%, #c9c6e0 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-subtitle {
+      font-size: clamp(18px, 2.5vw, 24px);
+      color: var(--text-muted);
+      margin-bottom: 48px;
+      max-width: 700px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    /* ── Email form ── */
+    .email-form {
+      max-width: 500px;
+      margin: 0 auto 16px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .email-input {
+      flex: 1;
+      min-width: 280px;
+      padding: 16px 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 16px;
+      transition: all 0.2s;
+    }
+
+    .email-input:focus {
+      outline: none;
+      border-color: var(--accent);
+      background: var(--surface-2);
+    }
+
+    .email-input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .cta-button {
+      padding: 16px 32px;
+      background: var(--gradient-1);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 16px;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .cta-button:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(124, 108, 252, 0.4);
+    }
+
+    .cta-button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .hero-note {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    /* ── Form feedback messages ── */
+    .form-message {
+      display: none;
+      max-width: 500px;
+      margin: 12px auto 0;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      text-align: center;
+    }
+
+    .form-message.success {
+      display: block;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: var(--success);
+    }
+
+    .form-message.error {
+      display: block;
+      background: rgba(248, 113, 113, 0.12);
+      border: 1px solid rgba(248, 113, 113, 0.3);
+      color: var(--error);
+    }
+
+    /* ── Problem section ── */
+    .problem {
+      padding: 80px 0;
+      background: linear-gradient(180deg, transparent 0%, rgba(124, 108, 252, 0.03) 100%);
+    }
+
+    .section-title {
+      font-size: clamp(28px, 4vw, 42px);
+      font-weight: 700;
+      margin-bottom: 48px;
+      text-align: center;
+    }
+
+    .problem-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 32px;
+      margin-bottom: 48px;
+    }
+
+    .problem-card {
+      padding: 32px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+    }
+
+    .problem-icon {
+      width: 48px;
+      height: 48px;
+      background: rgba(248, 113, 113, 0.1);
+      border: 1px solid rgba(248, 113, 113, 0.3);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      margin-bottom: 20px;
+    }
+
+    .problem-card h3 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .problem-card p {
+      color: var(--text-muted);
+      line-height: 1.7;
+    }
+
+    .problem-quote {
+      max-width: 700px;
+      margin: 0 auto;
+      padding: 32px;
+      background: rgba(124, 108, 252, 0.05);
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      font-size: 18px;
+      font-style: italic;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    /* ── Solution section ── */
+    .solution {
+      padding: 80px 0;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 48px;
+    }
+
+    .feature {
+      text-align: center;
+    }
+
+    .feature-icon {
+      width: 80px;
+      height: 80px;
+      background: var(--gradient-1);
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 24px;
+      font-size: 36px;
+    }
+
+    .feature h3 {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .feature p {
+      color: var(--text-muted);
+      line-height: 1.7;
+    }
+
+    /* ── How it works ── */
+    .how-it-works {
+      padding: 80px 0;
+      background: linear-gradient(180deg, rgba(124, 108, 252, 0.03) 0%, transparent 100%);
+    }
+
+    .steps {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    .step {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 48px;
+      align-items: flex-start;
+    }
+
+    .step-number {
+      width: 48px;
+      height: 48px;
+      background: var(--gradient-1);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+
+    .step-content h3 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .step-content p {
+      color: var(--text-muted);
+      line-height: 1.7;
+    }
+
+    /* ── CTA section ── */
+    .cta-section {
+      padding: 80px 0 120px;
+      text-align: center;
+    }
+
+    .cta-box {
+      max-width: 700px;
+      margin: 0 auto;
+      padding: 56px 48px;
+      background: var(--gradient-2);
+      border-radius: 24px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cta-box::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      right: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+      animation: pulse 4s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 0.6; }
+    }
+
+    .cta-box h2 {
+      font-size: clamp(28px, 4vw, 38px);
+      font-weight: 700;
+      margin-bottom: 16px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .cta-box p {
+      font-size: 18px;
+      margin-bottom: 32px;
+      opacity: 0.9;
+      position: relative;
+      z-index: 1;
+    }
+
+    .cta-form {
+      max-width: 450px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 1;
+    }
+
+    .cta-form .email-input {
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      color: white;
+      backdrop-filter: blur(8px);
+    }
+
+    .cta-form .email-input::placeholder {
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    .cta-form .email-input:focus {
+      background: rgba(255, 255, 255, 0.2);
+      border-color: rgba(255, 255, 255, 0.5);
+    }
+
+    .cta-form .cta-button {
+      background: white;
+      color: var(--accent);
+    }
+
+    .cta-form .cta-button:hover:not(:disabled) {
+      box-shadow: 0 8px 24px rgba(255, 255, 255, 0.3);
+    }
+
+    .cta-form .form-message.success {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.4);
+      color: white;
+    }
+
+    .cta-form .form-message.error {
+      background: rgba(248, 113, 113, 0.2);
+      border-color: rgba(248, 113, 113, 0.4);
+      color: #fca5a5;
+    }
+
+    /* ── Footer ── */
+    footer {
+      padding: 48px 0;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    .footer-content {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 24px;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 32px;
+      flex-wrap: wrap;
+    }
+
+    .footer-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .footer-links a:hover {
+      color: var(--text);
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 768px) {
+      .hero { padding: 80px 0 60px; }
+      .email-form { flex-direction: column; }
+      .email-input { min-width: 100%; }
+      .problem-grid, .feature-grid { grid-template-columns: 1fr; }
+      .step { flex-direction: column; }
+      .cta-box { padding: 40px 24px; }
+      .footer-content { flex-direction: column; text-align: center; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="container">
+      <div class="header-content">
+        <a href="/" class="logo">
+          <div class="logo-icon">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <path d="M9 2L9 16M5 6L9 2L13 6M5 12L9 16L13 12" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          Cadence
+        </a>
+        <div style="display: flex; gap: 12px; align-items: center;">
+          <a href="/login" style="color: var(--text-muted); text-decoration: none; font-size: 14px; font-weight: 500; transition: color 0.2s;"
+             onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--text-muted)'">Log in</a>
+          <a href="#waitlist" class="cta-nav">Join waitlist</a>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="container">
+      <h1>Your music release,<br>finally under control</h1>
+      <p class="hero-subtitle">
+        The intelligent timeline for independent artists. Plan your release backward from launch day, and watch your whole plan adjust when things change.
+      </p>
+      <form class="email-form" id="hero-form">
+        <input type="email" class="email-input" placeholder="Enter your email" required>
+        <button type="submit" class="cta-button" id="hero-btn">Get early access</button>
+      </form>
+      <div class="form-message" id="hero-msg"></div>
+      <p class="hero-note" style="margin-top: 12px;">Join 500+ artists planning smarter releases</p>
+    </div>
+  </section>
+
+  <!-- Problem -->
+  <section class="problem">
+    <div class="container">
+      <h2 class="section-title">Release planning shouldn't feel like chaos</h2>
+
+      <div class="problem-grid">
+        <div class="problem-card">
+          <div class="problem-icon">📅</div>
+          <h3>Delays cascade everywhere</h3>
+          <p>Mixing takes an extra week? Now you're scrambling to update distribution, playlist pitching, pre-saves, and launch day — manually.</p>
+        </div>
+
+        <div class="problem-card">
+          <div class="problem-icon">🤯</div>
+          <h3>You're drowning in spreadsheets</h3>
+          <p>Between Google Sheets, Notion, and your Notes app, you have three different timelines — and none of them match reality.</p>
+        </div>
+
+        <div class="problem-card">
+          <div class="problem-icon">⏰</div>
+          <h3>Missed deadlines kill momentum</h3>
+          <p>You didn't submit to Spotify editorial 4 weeks early. You forgot about the vinyl lead time. Your launch was supposed to be "perfect."</p>
+        </div>
+      </div>
+
+      <div class="problem-quote">
+        "I spent more time updating my release plan than actually making music. And I still missed my distributor's deadline."
+      </div>
+    </div>
+  </section>
+
+  <!-- Solution -->
+  <section class="solution">
+    <div class="container">
+      <h2 class="section-title">Meet Cadence: The timeline that thinks ahead</h2>
+
+      <div class="feature-grid">
+        <div class="feature">
+          <div class="feature-icon">🎯</div>
+          <h3>Backward planning</h3>
+          <p>Tell us your release date. We build your entire timeline working backward — distribution, pitching, marketing, everything.</p>
+        </div>
+
+        <div class="feature">
+          <div class="feature-icon">🔗</div>
+          <h3>Automatic cascade</h3>
+          <p>Drag a task forward. Watch everything downstream shift automatically. No more manual updates. No more broken plans.</p>
+        </div>
+
+        <div class="feature">
+          <div class="feature-icon">🧠</div>
+          <h3>Invisible AI</h3>
+          <p>Scheduling mastering 3 days before distribution? We'll warn you. Planning your second release? We remember how long things actually took last time.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How it works -->
+  <section class="how-it-works">
+    <div class="container">
+      <h2 class="section-title">60 seconds to a working plan</h2>
+
+      <div class="steps">
+        <div class="step">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h3>Tell us what you're releasing</h3>
+            <p>Single, EP, or album. Your target release date. What's already done.</p>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h3>Get an instant timeline</h3>
+            <p>Pre-populated with industry-standard tasks, working backward from your launch day. Mixing 6 weeks out. Spotify editorial 4 weeks out. Pre-saves 2 weeks out.</p>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <h3>Watch it adapt as you work</h3>
+            <p>Drag a task. The whole plan shifts. Add a collaborator. We add buffer time. Reality changes. So does your timeline.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Final CTA -->
+  <section class="cta-section" id="waitlist">
+    <div class="container">
+      <div class="cta-box">
+        <h2>Get early access</h2>
+        <p>Join the waitlist and be among the first artists to plan releases the smart way.</p>
+        <form class="cta-form" id="cta-form">
+          <div class="email-form">
+            <input type="email" class="email-input" placeholder="Enter your email" required>
+            <button type="submit" class="cta-button" id="cta-btn">Join waitlist</button>
+          </div>
+          <div class="form-message" id="cta-msg"></div>
+          <p class="hero-note" style="margin-top: 16px; color: rgba(255,255,255,0.7);">
+            Early access &middot; No credit card &middot; Free for your first 3 releases
+          </p>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container">
+      <div class="footer-content">
+        <div>&copy; 2026 Cadence. Built for artists.</div>
+        <div class="footer-links">
+          <a href="mailto:yo@rcawhatsgood.com">Contact</a>
+          <a href="/login">Log in</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const SUPABASE_URL = 'https://hzlzirlcizmaybeorsfs.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh6bHppcmxjaXptYXliZW9yc2ZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MTI2MzEsImV4cCI6MjA5NDM4ODYzMX0.VNOe5jHQp8nMeOAoTd5pGaVdKE6vKo5whvsutA0SZdQ';
+
+    async function submitWaitlist(email, source) {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/waitlist`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Prefer': 'return=minimal',
+        },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), source }),
+      });
+
+      if (res.status === 409) throw new Error('already_signed_up');
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || 'request_failed');
+      }
+    }
+
+    function showMessage(msgEl, type, text) {
+      msgEl.className = `form-message ${type}`;
+      msgEl.textContent = text;
+    }
+
+    async function handleSubmit(e, source, btnId, msgId) {
+      e.preventDefault();
+      const form = e.target;
+      const email = form.querySelector('input[type="email"]').value;
+      const btn = document.getElementById(btnId);
+      const msg = document.getElementById(msgId);
+
+      btn.disabled = true;
+      btn.textContent = 'Joining…';
+      msg.className = 'form-message';
+
+      try {
+        await submitWaitlist(email, source);
+        showMessage(msg, 'success', '🎉 You\'re on the list! We\'ll be in touch soon.');
+        form.reset();
+      } catch (err) {
+        if (err.message === 'already_signed_up') {
+          showMessage(msg, 'success', 'You\'re already on the list — we\'ll reach out soon!');
+        } else {
+          showMessage(msg, 'error', 'Something went wrong. Try again or email yo@rcawhatsgood.com');
+        }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = source === 'hero' ? 'Get early access' : 'Join waitlist';
+      }
+    }
+
+    document.getElementById('hero-form').addEventListener('submit', e => handleSubmit(e, 'hero', 'hero-btn', 'hero-msg'));
+    document.getElementById('cta-form').addEventListener('submit',  e => handleSubmit(e, 'cta',  'cta-btn',  'cta-msg'));
+
+    // Smooth scroll for anchor links
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+      anchor.addEventListener('click', function(e) {
+        e.preventDefault();
+        const target = document.querySelector(this.getAttribute('href'));
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+  </script>
+</body>
 </html>
